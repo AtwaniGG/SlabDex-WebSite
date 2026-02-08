@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth & Subscription ────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now()) @map("created_at")
+
+  authIdentities      AuthIdentity[]
+  subscriptions       Subscription[]
+  subscriptionPeriods SubscriptionPeriod[]
+  invoices            Invoice[]
+  trackedAddresses    TrackedAddress[]
+  alerts              Alert[]
+
+  @@map("users")
+}
+
+model AuthIdentity {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  walletAddress String   @map("wallet_address")
+  chain         String   @default("evm")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([walletAddress, chain])
+  @@map("auth_identities")
+}
+
+model Subscription {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  plan             String   @default("free") // free | premium
+  status           String   @default("inactive") // inactive | active | expired
+  currentPeriodEnd DateTime? @map("current_period_end")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+// ─── On-chain Payments ──────────────────────────────────────────────
+
+model Invoice {
+  id                   String    @id @default(uuid())
+  userId               String    @map("user_id")
+  usdAmount            Decimal   @default(15) @map("usd_amount") @db.Decimal(10, 2)
+  chain                String    // ethereum | polygon | solana
+  requiredAmountNative String    @map("required_amount_native")
+  receiveAddress       String    @map("receive_address")
+  status               String    @default("pending") // pending | paid | expired | failed
+  txHash               String?   @map("tx_hash")
+  expiresAt            DateTime  @map("expires_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  paidAt               DateTime? @map("paid_at")
+
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionPeriod SubscriptionPeriod?
+
+  @@map("invoices")
+}
+
+model SubscriptionPeriod {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  startAt         DateTime @map("start_at")
+  endAt           DateTime @map("end_at")
+  sourceInvoiceId String   @unique @map("source_invoice_id")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoice Invoice @relation(fields: [sourceInvoiceId], references: [id])
+
+  @@map("subscription_periods")
+}
+
+// ─── Tracking Addresses ─────────────────────────────────────────────
+
+model TrackedAddress {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id") // null for free/anonymous usage
+  platform  String   @default("courtyard")
+  chain     String   @default("evm")
+  address   String
+  label     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user        User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  setProgress SetProgress[]
+
+  @@unique([address, platform])
+  @@map("tracked_addresses")
+}
+
+// ─── Assets and Slabs ───────────────────────────────────────────────
+
+model AssetRaw {
+  id              String   @id @default(uuid())
+  chain           String
+  contractAddress String   @map("contract_address")
+  tokenId         String   @map("token_id")
+  ownerAddress    String   @map("owner_address")
+  tokenUri        String?  @map("token_uri")
+  rawMetadata     Json?    @map("raw_metadata")
+  lastIndexedAt   DateTime @map("last_indexed_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  slab Slab?
+
+  @@unique([contractAddress, tokenId])
+  @@index([ownerAddress])
+  @@map("assets_raw")
+}
+
+model Slab {
+  id              String   @id @default(uuid())
+  assetRawId      String   @unique @map("asset_raw_id")
+  platform        String   @default("courtyard")
+  certNumber      String?  @map("cert_number")
+  grader          String?
+  grade           String?
+  setName         String?  @map("set_name")
+  cardName        String?  @map("card_name")
+  cardNumber      String?  @map("card_number")
+  variant         String?
+  imageUrl        String?  @map("image_url")
+  fingerprintText String?  @map("fingerprint_text")
+  parseStatus     String   @default("fail") @map("parse_status") // ok | partial | fail
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  assetRaw            AssetRaw             @relation(fields: [assetRawId], references: [id], onDelete: Cascade)
+  prices              Price[]
+  priceSnapshotsDaily PriceSnapshotDaily[]
+
+  @@index([certNumber])
+  @@index([setName])
+  @@index([platform])
+  @@map("slabs")
+}
+
+// ─── Pricing & History ──────────────────────────────────────────────
+
+model Price {
+  id          String   @id @default(uuid())
+  slabId      String   @map("slab_id")
+  source      String   @default("alt") // alt
+  marketPrice Decimal  @map("market_price") @db.Decimal(12, 2)
+  currency    String   @default("USD")
+  confidence  String   @default("medium") // high | medium | low
+  retrievedAt DateTime @map("retrieved_at")
+  rawResponse Json?    @map("raw_response")
+
+  slab Slab @relation(fields: [slabId], references: [id], onDelete: Cascade)
+
+  @@index([slabId, retrievedAt])
+  @@map("prices")
+}
+
+model PriceSnapshotDaily {
+  id          String   @id @default(uuid())
+  slabId      String   @map("slab_id")
+  date        DateTime @db.Date
+  marketPrice Decimal  @map("market_price") @db.Decimal(12, 2)
+
+  slab Slab @relation(fields: [slabId], references: [id], onDelete: Cascade)
+
+  @@unique([slabId, date])
+  @@map("price_snapshots_daily")
+}
+
+// ─── Set Completion ─────────────────────────────────────────────────
+
+model SetReference {
+  id          String  @id @default(uuid())
+  setName     String  @unique @map("set_name")
+  ptcgSetId   String? @unique @map("ptcg_set_id")
+  series      String?
+  totalCards  Int     @map("total_cards")
+  releaseYear Int?    @map("release_year")
+  generation  String?
+
+  cards CardReference[]
+
+  @@map("set_references")
+}
+
+model CardReference {
+  id           String  @id @default(uuid())
+  ptcgCardId   String  @unique @map("ptcg_card_id")
+  cardName     String  @map("card_name")
+  cardNumber   String  @map("card_number")
+  setRefId     String  @map("set_ref_id")
+  setName      String  @map("set_name")
+  imageSmall   String? @map("image_small")
+  imageLarge   String? @map("image_large")
+
+  setReference SetReference @relation(fields: [setRefId], references: [id], onDelete: Cascade)
+
+  @@index([cardName])
+  @@index([cardNumber])
+  @@index([setName])
+  @@index([cardName, cardNumber])
+  @@map("card_references")
+}
+
+model SetProgress {
+  id               String   @id @default(uuid())
+  trackedAddressId String   @map("tracked_address_id")
+  setName          String   @map("set_name")
+  ownedCount       Int      @map("owned_count")
+  totalCards       Int      @map("total_cards")
+  completionPct    Decimal  @map("completion_pct") @db.Decimal(5, 2)
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  trackedAddress TrackedAddress @relation(fields: [trackedAddressId], references: [id], onDelete: Cascade)
+
+  @@unique([trackedAddressId, setName])
+  @@map("set_progress")
+}
+
+// ─── Alerts ─────────────────────────────────────────────────────────
+
+model Alert {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String   // price_move | milestone
+  rule      Json
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events AlertEvent[]
+
+  @@map("alerts")
+}
+
+model AlertEvent {
+  id          String   @id @default(uuid())
+  alertId     String   @map("alert_id")
+  triggeredAt DateTime @map("triggered_at")
+  payload     Json
+
+  alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@map("alert_events")
+}
