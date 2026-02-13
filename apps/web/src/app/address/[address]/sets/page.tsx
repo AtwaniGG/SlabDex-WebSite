@@ -1,16 +1,16 @@
 import Link from 'next/link';
 import { api } from '@/lib/api';
-import SetAccordion from '@/components/SetAccordion';
+import SetCard from '@/components/SetCard';
 
 interface Props {
   params: { address: string };
 }
 
 export default async function SetsPage({ params }: Props) {
-  let slabsBySet;
+  let sets;
 
   try {
-    slabsBySet = await api.getAddressSlabsBySet(params.address);
+    sets = await api.getAddressSets(params.address);
   } catch {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8 text-center">
@@ -22,9 +22,15 @@ export default async function SetsPage({ params }: Props) {
     );
   }
 
-  const setGroups = slabsBySet.filter((g) => g.setName !== null);
-  const uncategorized = slabsBySet.find((g) => g.setName === null);
-  const completedSets = setGroups.filter((g) => g.completionPct === 100).length;
+  // Sort: completed first, then by completionPct DESC
+  const sorted = [...sets].sort((a, b) => {
+    const aComplete = a.completionPct === 100 ? 1 : 0;
+    const bComplete = b.completionPct === 100 ? 1 : 0;
+    if (aComplete !== bComplete) return bComplete - aComplete;
+    return b.completionPct - a.completionPct;
+  });
+
+  const completedSets = sets.filter((s) => s.completionPct === 100).length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -36,32 +42,23 @@ export default async function SetsPage({ params }: Props) {
       </Link>
       <h1 className="text-2xl font-bold mb-2">Set Dex</h1>
       <p className="text-gray-400 mb-6">
-        {setGroups.length} sets &middot; {completedSets} complete
+        {sets.length} sets &middot; {completedSets} complete
       </p>
 
-      {setGroups.length === 0 ? (
+      {sorted.length === 0 ? (
         <div className="text-center py-12 text-gray-500">
           <p className="text-lg">No sets found</p>
           <p className="text-sm mt-1">Set data will appear once slabs are indexed and parsed.</p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {setGroups.map((group) => (
-            <SetAccordion
-              key={group.setName!}
-              group={group}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {sorted.map((set) => (
+            <SetCard
+              key={set.setName}
+              set={set}
               address={params.address}
             />
           ))}
-        </div>
-      )}
-
-      {uncategorized && uncategorized.slabs.length > 0 && (
-        <div className="mt-8 opacity-60">
-          <SetAccordion
-            group={uncategorized}
-            address={params.address}
-          />
         </div>
       )}
     </div>

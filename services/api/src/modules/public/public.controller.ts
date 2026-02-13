@@ -17,11 +17,13 @@ export class PublicController {
     @Query('q') q?: string,
     @Query('grade') grade?: string,
     @Query('page') page?: string,
+    @Query('sort') sort?: string,
   ) {
     return this.publicService.getAddressSlabs(address, {
       set,
       q,
       grade,
+      sort: sort as 'price_asc' | 'price_desc' | undefined,
       page: page ? parseInt(page, 10) : undefined,
     });
   }
@@ -29,6 +31,15 @@ export class PublicController {
   @Get('address/:address/slabs-by-set')
   async getAddressSlabsBySet(@Param('address') address: string) {
     return this.publicService.getAddressSlabsBySet(address);
+  }
+
+  @Get('address/:address/sets/:setName')
+  async getAddressSetDetail(
+    @Param('address') address: string,
+    @Param('setName') setName: string,
+  ) {
+    const decoded = decodeURIComponent(setName);
+    return this.publicService.getAddressSetDetail(address, decoded);
   }
 
   @Get('address/:address/sets')

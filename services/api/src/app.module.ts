@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { PublicModule } from './modules/public/public.module';
 import { SlabsModule } from './modules/slabs/slabs.module';
@@ -15,6 +16,7 @@ import { PokemonTcgModule } from './modules/pokemon-tcg/pokemon-tcg.module';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     PrismaModule,
     IndexingModule,
     PokemonTcgModule,

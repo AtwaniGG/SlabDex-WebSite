@@ -45,6 +45,35 @@ function getAttr(attributes: NftAttribute[], traitType: string): string | null {
 }
 
 /**
+ * Check if a Courtyard NFT is a Pokemon card.
+ * Courtyard fingerprints start with "Pokemon | ..." for Pokemon cards.
+ * Also checks Category attribute and name/description for "Pokemon".
+ */
+function isPokemonNft(metadata: Record<string, unknown>, name?: string, description?: string): boolean {
+  const attributes = (metadata.attributes as NftAttribute[]) || [];
+
+  // Check Category attribute
+  const category = getAttr(attributes, 'Category');
+  if (category) {
+    return category.toLowerCase().includes('pokemon') || category.toLowerCase().includes('pokémon');
+  }
+
+  // Check fingerprint
+  const proofOfIntegrity = metadata.token_info
+    ? (metadata.token_info as Record<string, unknown>).proof_of_integrity as Record<string, string> | undefined
+    : undefined;
+  const fingerprint = proofOfIntegrity?.fingerprint || null;
+  if (fingerprint) {
+    const firstPart = fingerprint.split('|')[0]?.trim().toLowerCase() || '';
+    return firstPart === 'pokemon' || firstPart === 'pokémon';
+  }
+
+  // Fallback: check name/description
+  const text = [name, description].filter(Boolean).join(' ').toLowerCase();
+  return text.includes('pokemon') || text.includes('pokémon');
+}
+
+/**
  * Parse Courtyard NFT metadata into slab fields.
  *
  * Courtyard metadata uses a "proof_of_integrity.fingerprint" field like:
@@ -241,6 +270,12 @@ export class IndexingService {
       const hasIdentity = name || description || tokenUri;
       if (!hasMetadata && !hasIdentity && !nft.image) {
         this.logger.debug(`Skipping ghost NFT tokenId=${tokenId} (no metadata)`);
+        continue;
+      }
+
+      // Skip non-Pokemon NFTs (Courtyard sells football, basketball, etc.)
+      if (!isPokemonNft(metadata, name, description)) {
+        this.logger.debug(`Skipping non-Pokemon NFT tokenId=${tokenId}`);
         continue;
       }
 

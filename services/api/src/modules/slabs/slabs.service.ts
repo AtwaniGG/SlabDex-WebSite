@@ -7,6 +7,7 @@ export interface SlabsQuery {
   set?: string;
   q?: string;
   grade?: string;
+  sort?: 'price_asc' | 'price_desc';
   page?: number;
   pageSize?: number;
 }
@@ -38,7 +39,10 @@ export class SlabsService {
       ];
     }
 
-    const [slabs, total] = await Promise.all([
+    const sortByPrice = query.sort === 'price_asc' || query.sort === 'price_desc';
+
+    // When sorting by price, fetch all then sort in-memory (price is on a relation)
+    const [allSlabs, total] = await Promise.all([
       this.prisma.slab.findMany({
         where,
         include: {
@@ -47,30 +51,42 @@ export class SlabsService {
             take: 1,
           },
         },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: pageSize,
+        orderBy: sortByPrice ? undefined : { createdAt: 'desc' },
+        skip: sortByPrice ? undefined : skip,
+        take: sortByPrice ? undefined : pageSize,
       }),
       this.prisma.slab.count({ where }),
     ]);
 
+    const mapped = allSlabs.map((slab) => ({
+      id: slab.id,
+      certNumber: slab.certNumber,
+      grader: slab.grader,
+      grade: slab.grade,
+      setName: slab.setName,
+      cardName: slab.cardName,
+      cardNumber: slab.cardNumber,
+      variant: slab.variant,
+      imageUrl: slab.imageUrl,
+      parseStatus: slab.parseStatus,
+      platform: slab.platform,
+      marketPrice: slab.prices[0]?.marketPrice ? Number(slab.prices[0].marketPrice) : null,
+      priceCurrency: slab.prices[0]?.currency ?? null,
+      priceRetrievedAt: slab.prices[0]?.retrievedAt ?? null,
+    }));
+
+    if (sortByPrice) {
+      mapped.sort((a, b) => {
+        const aPrice = a.marketPrice ?? (query.sort === 'price_asc' ? Infinity : -1);
+        const bPrice = b.marketPrice ?? (query.sort === 'price_asc' ? Infinity : -1);
+        return query.sort === 'price_asc' ? aPrice - bPrice : bPrice - aPrice;
+      });
+    }
+
+    const data = sortByPrice ? mapped.slice(skip, skip + pageSize) : mapped;
+
     return {
-      data: slabs.map((slab) => ({
-        id: slab.id,
-        certNumber: slab.certNumber,
-        grader: slab.grader,
-        grade: slab.grade,
-        setName: slab.setName,
-        cardName: slab.cardName,
-        cardNumber: slab.cardNumber,
-        variant: slab.variant,
-        imageUrl: slab.imageUrl,
-        parseStatus: slab.parseStatus,
-        platform: slab.platform,
-        marketPrice: slab.prices[0]?.marketPrice ?? null,
-        priceCurrency: slab.prices[0]?.currency ?? null,
-        priceRetrievedAt: slab.prices[0]?.retrievedAt ?? null,
-      })),
+      data,
       pagination: {
         page,
         pageSize,

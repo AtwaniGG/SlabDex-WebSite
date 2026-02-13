@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { PricingService } from './pricing.service';
-import { PriceTrackerService } from './price-tracker.service';
+import { PokemonTcgModule } from '../pokemon-tcg/pokemon-tcg.module';
 
 @Module({
-  providers: [PricingService, PriceTrackerService],
+  imports: [PokemonTcgModule],
+  providers: [PricingService],
   exports: [PricingService],
 })
 export class PricingModule {}

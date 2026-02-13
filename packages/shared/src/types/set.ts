@@ -3,6 +3,8 @@ export interface SetReference {
   totalCards: number;
   releaseYear: number | null;
   generation: string | null;
+  logoUrl: string | null;
+  symbolUrl: string | null;
 }
 
 export interface SetProgress {

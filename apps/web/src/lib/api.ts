@@ -27,6 +27,9 @@ export interface SetProgressItem {
   completionPct: number;
   releaseYear: number | null;
   generation: string | null;
+  logoUrl: string | null;
+  symbolUrl: string | null;
+  previewImageUrl: string | null;
 }
 
 export interface SlabItem {
@@ -54,6 +57,27 @@ export interface SetWithSlabs {
   slabs: SlabItem[];
 }
 
+export interface CardRefItem {
+  ptcgCardId: string;
+  cardName: string;
+  cardNumber: string;
+  imageSmall: string | null;
+  imageLarge: string | null;
+}
+
+export interface SetDetailWithCards {
+  setName: string;
+  series: string | null;
+  totalCards: number;
+  releaseYear: number | null;
+  logoUrl: string | null;
+  symbolUrl: string | null;
+  ownedCount: number;
+  completionPct: number;
+  ownedCards: SlabItem[];
+  neededCards: CardRefItem[];
+}
+
 export interface PaginatedSlabs {
   data: SlabItem[];
   pagination: {
@@ -68,11 +92,12 @@ export const api = {
   getAddressSummary: (address: string) =>
     fetchApi<AddressSummary>(`/public/address/${address}/summary`),
 
-  getAddressSlabs: (address: string, params?: { set?: string; q?: string; grade?: string; page?: number }) => {
+  getAddressSlabs: (address: string, params?: { set?: string; q?: string; grade?: string; sort?: string; page?: number }) => {
     const searchParams = new URLSearchParams();
     if (params?.set) searchParams.set('set', params.set);
     if (params?.q) searchParams.set('q', params.q);
     if (params?.grade) searchParams.set('grade', params.grade);
+    if (params?.sort) searchParams.set('sort', params.sort);
     if (params?.page) searchParams.set('page', String(params.page));
     const qs = searchParams.toString();
     return fetchApi<PaginatedSlabs>(`/public/address/${address}/slabs${qs ? `?${qs}` : ''}`);
@@ -83,4 +108,9 @@ export const api = {
 
   getAddressSets: (address: string) =>
     fetchApi<SetProgressItem[]>(`/public/address/${address}/sets`),
+
+  getAddressSetDetail: (address: string, setName: string) =>
+    fetchApi<SetDetailWithCards>(
+      `/public/address/${address}/sets/${encodeURIComponent(setName)}`,
+    ),
 };

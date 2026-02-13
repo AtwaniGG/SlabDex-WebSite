@@ -1,21 +1,46 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PriceTrackerService } from './price-tracker.service';
-import type { PriceTrackerCard } from './price-tracker.service';
+import { PokemonTcgService } from '../pokemon-tcg/pokemon-tcg.service';
+import { PokemonApiService } from '../pokemon-tcg/pokemon-api.service';
 
-const PRICE_TTL_MS = 24 * 60 * 60 * 1000; // Skip if price < 24h old
-const CREDIT_BUDGET = 90; // Stop before hitting free tier limit (100/day)
-const REQUEST_DELAY_MS = 1100; // 60 req/min → 1 req/sec with buffer
+const TCGDEX_DELAY_MS = 300;
+const POKEMON_API_DELAY_MS = 700; // ~100 req/day limit, be conservative
+const BATCH_SIZE = 20;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Grade multipliers applied to raw card prices to estimate graded slab values.
+ * Based on average eBay sold data across the Pokemon TCG market.
+ * Key = grade number (rounded), value = multiplier on raw market price.
+ */
+const GRADE_MULTIPLIERS: Record<string, Record<number, number>> = {
+  psa: { 10: 5, 9: 2, 8: 1.5, 7: 1.2, 6: 1, 5: 0.9, 4: 0.8, 3: 0.7, 2: 0.6, 1: 0.5 },
+  cgc: { 10: 6, 9: 1.8, 8: 1.3, 7: 1.1, 6: 1, 5: 0.9, 4: 0.8, 3: 0.7, 2: 0.6, 1: 0.5 },
+  bgs: { 10: 8, 9: 2, 8: 1.4, 7: 1.1, 6: 1, 5: 0.9, 4: 0.8, 3: 0.7, 2: 0.6, 1: 0.5 },
+  sgc: { 10: 4, 9: 1.8, 8: 1.3, 7: 1.1, 6: 1, 5: 0.9, 4: 0.8, 3: 0.7, 2: 0.6, 1: 0.5 },
+};
+
+function getGradeMultiplier(grader: string | null, grade: string | null): number {
+  if (!grader || !grade) return 1;
+  const graderKey = grader.toLowerCase();
+  const gradeNum = Math.round(parseFloat(grade));
+  if (isNaN(gradeNum)) return 1;
+  const multipliers = GRADE_MULTIPLIERS[graderKey];
+  if (!multipliers) return 1;
+  return multipliers[gradeNum] ?? 1;
+}
 
 @Injectable()
 export class PricingService {
   private readonly logger = new Logger(PricingService.name);
+  private isRunning = false;
 
   constructor(
     private prisma: PrismaService,
-    private priceTrackerService: PriceTrackerService,
+    private pokemonTcgService: PokemonTcgService,
+    private pokemonApiService: PokemonApiService,
   ) {}
 
   async getLatestPrice(slabId: string) {
@@ -32,10 +57,275 @@ export class PricingService {
     });
   }
 
+  /** Run at 6 AM and 6 PM UTC every day */
+  @Cron('0 6,18 * * *')
+  async scheduledPriceRefresh() {
+    this.logger.log('Scheduled price refresh started');
+    await this.refreshAllPrices();
+  }
+
   /**
-   * Fetch graded prices from PokemonPriceTracker for all slabs owned by an address.
-   * Uses eBay sold data to get PSA/BGS/CGC grade-specific pricing.
-   * Rate-limited to 1 req/sec to respect API limits.
+   * Refresh prices for ALL slabs.
+   * Phase 1: Pokemon-API.com — real graded prices from Cardmarket (up to 90 calls/run)
+   * Phase 2: TCGdex — raw price + grade multiplier as fallback (unlimited)
+   */
+  async refreshAllPrices(): Promise<number> {
+    if (this.isRunning) {
+      this.logger.warn('Price refresh already running, skipping');
+      return 0;
+    }
+    this.isRunning = true;
+
+    try {
+      const slabs = await this.prisma.slab.findMany({
+        where: { cardName: { not: null } },
+        select: {
+          id: true,
+          cardName: true,
+          cardNumber: true,
+          setName: true,
+          grader: true,
+          grade: true,
+        },
+      });
+
+      if (slabs.length === 0) {
+        this.logger.log('No slabs to price');
+        return 0;
+      }
+
+      // Group slabs by unique card identity (cardName + setName)
+      const mkKey = (name: string, set: string | null) =>
+        `${name.toLowerCase()}|${(set ?? '').toLowerCase()}`;
+
+      const cardGroups = new Map<string, typeof slabs>();
+      for (const slab of slabs) {
+        const key = mkKey(slab.cardName!, slab.setName);
+        if (!cardGroups.has(key)) cardGroups.set(key, []);
+        cardGroups.get(key)!.push(slab);
+      }
+
+      this.logger.log(
+        `Pricing ${slabs.length} slabs (${cardGroups.size} unique cards)`,
+      );
+
+      let totalPriced = 0;
+      const now = new Date();
+      const pricedSlabIds = new Set<string>();
+      const priceInserts: Parameters<typeof this.prisma.price.create>[0]['data'][] = [];
+
+      // ── Phase 1: Pokemon-API.com (real graded prices) ──
+      if (this.pokemonApiService.isAvailable()) {
+        const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+        const recentPrices = await this.prisma.price.findMany({
+          where: {
+            source: 'pokemon-api',
+            retrievedAt: { gte: new Date(now.getTime() - TWENTY_FOUR_HOURS) },
+          },
+          select: { slabId: true },
+          distinct: ['slabId'],
+        });
+        const recentlyPriced = new Set(recentPrices.map((p) => p.slabId));
+
+        const needsRefresh: [string, typeof slabs][] = [];
+        for (const [key, groupSlabs] of cardGroups) {
+          if (!groupSlabs.every((s) => recentlyPriced.has(s.id))) {
+            needsRefresh.push([key, groupSlabs]);
+          }
+        }
+
+        this.logger.log(
+          `Pokemon-API: ${needsRefresh.length}/${cardGroups.size} cards need refresh`,
+        );
+
+        let apiFetched = 0;
+        const maxCalls = 90; // save 10 for on-demand requests
+
+        for (const [, groupSlabs] of needsRefresh) {
+          if (apiFetched >= maxCalls) break;
+
+          const rep = groupSlabs[0];
+          await sleep(POKEMON_API_DELAY_MS);
+          const results = await this.pokemonApiService.searchCards(
+            rep.cardName!,
+            rep.setName ?? undefined,
+          );
+          apiFetched++;
+
+          if (results.length === 0) continue;
+
+          const match = this.pokemonApiService.findBestMatch(
+            results,
+            rep.cardName!,
+            rep.setName ?? undefined,
+            rep.cardNumber ?? undefined,
+          );
+          if (!match) continue;
+
+          for (const slab of groupSlabs) {
+            if (recentlyPriced.has(slab.id)) {
+              pricedSlabIds.add(slab.id);
+              continue;
+            }
+
+            const gradedPrice = slab.grader && slab.grade
+              ? this.pokemonApiService.extractGradedPrice(match, slab.grader, slab.grade)
+              : null;
+
+            if (gradedPrice) {
+              priceInserts.push({
+                slabId: slab.id,
+                source: 'pokemon-api',
+                marketPrice: gradedPrice.price,
+                currency: gradedPrice.currency,
+                confidence: 'high',
+                retrievedAt: now,
+                rawResponse: {
+                  pokemonApiCardId: match.id,
+                  cardName: match.name,
+                  setName: match.episode?.name,
+                  gradedSource: gradedPrice.source,
+                  grader: slab.grader,
+                  grade: slab.grade,
+                } as any,
+              });
+            } else {
+              // Raw price from Pokemon-API + grade multiplier
+              const rawPrice = this.pokemonApiService.extractRawPrice(match);
+              if (rawPrice) {
+                const multiplier = getGradeMultiplier(slab.grader, slab.grade);
+                priceInserts.push({
+                  slabId: slab.id,
+                  source: 'pokemon-api',
+                  marketPrice: Math.round(rawPrice.price * multiplier * 100) / 100,
+                  currency: rawPrice.currency,
+                  confidence: 'medium',
+                  retrievedAt: now,
+                  rawResponse: {
+                    pokemonApiCardId: match.id,
+                    rawPrice: rawPrice.price,
+                    gradeMultiplier: multiplier,
+                    grader: slab.grader,
+                    grade: slab.grade,
+                  } as any,
+                });
+              }
+            }
+            pricedSlabIds.add(slab.id);
+            totalPriced++;
+
+            if (priceInserts.length >= BATCH_SIZE) {
+              await this.flushPrices(priceInserts);
+              priceInserts.length = 0;
+            }
+          }
+
+          if (apiFetched % 20 === 0) {
+            this.logger.log(`  Pokemon-API: ${apiFetched} calls made`);
+          }
+        }
+
+        if (priceInserts.length > 0) {
+          await this.flushPrices(priceInserts);
+          priceInserts.length = 0;
+        }
+
+        this.logger.log(
+          `Pokemon-API phase done: ${totalPriced} slabs priced (${apiFetched} API calls)`,
+        );
+      }
+
+      // ── Phase 2: TCGdex fallback for remaining slabs ──
+      const unpricedSlabs = slabs.filter((s) => !pricedSlabIds.has(s.id));
+
+      if (unpricedSlabs.length > 0) {
+        this.logger.log(
+          `TCGdex fallback: pricing ${unpricedSlabs.length} remaining slabs`,
+        );
+
+        const cardRefs = await this.prisma.cardReference.findMany({
+          select: { ptcgCardId: true, cardName: true, cardNumber: true, setName: true },
+        });
+        const refByNameSet = new Map<string, string>();
+        const refByNumSet = new Map<string, string>();
+        for (const ref of cardRefs) {
+          refByNameSet.set(
+            `${ref.cardName.toLowerCase()}|${ref.setName.toLowerCase()}`,
+            ref.ptcgCardId,
+          );
+          refByNumSet.set(
+            `${ref.cardNumber}|${ref.setName.toLowerCase()}`,
+            ref.ptcgCardId,
+          );
+        }
+
+        const cardIdToSlabs = new Map<string, typeof unpricedSlabs>();
+        for (const slab of unpricedSlabs) {
+          const setKey = (slab.setName ?? '').toLowerCase();
+          const ptcgCardId =
+            refByNameSet.get(`${slab.cardName!.toLowerCase()}|${setKey}`) ??
+            (slab.cardNumber ? refByNumSet.get(`${slab.cardNumber}|${setKey}`) : null);
+          if (ptcgCardId) {
+            if (!cardIdToSlabs.has(ptcgCardId)) cardIdToSlabs.set(ptcgCardId, []);
+            cardIdToSlabs.get(ptcgCardId)!.push(slab);
+          }
+        }
+
+        let tcgdexPriced = 0;
+        for (const [tcgCardId, cardSlabs] of cardIdToSlabs) {
+          await sleep(TCGDEX_DELAY_MS);
+          const cardPricing = await this.pokemonTcgService.getCardPricing(tcgCardId);
+          if (!cardPricing?.pricing) continue;
+
+          const rawPrice = this.pokemonTcgService.extractMarketPrice(cardPricing.pricing);
+          if (!rawPrice) continue;
+
+          for (const slab of cardSlabs) {
+            const multiplier = getGradeMultiplier(slab.grader, slab.grade);
+            priceInserts.push({
+              slabId: slab.id,
+              source: 'tcgdex',
+              marketPrice: Math.round(rawPrice.price * multiplier * 100) / 100,
+              currency: rawPrice.currency,
+              confidence: multiplier > 1 ? 'low' : 'medium',
+              retrievedAt: now,
+              rawResponse: {
+                rawPrice: rawPrice.price,
+                variant: rawPrice.variant,
+                gradeMultiplier: multiplier,
+                grader: slab.grader,
+                grade: slab.grade,
+              } as any,
+            });
+            tcgdexPriced++;
+          }
+
+          if (priceInserts.length >= BATCH_SIZE) {
+            await this.flushPrices(priceInserts);
+            priceInserts.length = 0;
+          }
+        }
+
+        if (priceInserts.length > 0) {
+          await this.flushPrices(priceInserts);
+        }
+
+        this.logger.log(`TCGdex fallback done: ${tcgdexPriced} additional slabs priced`);
+        totalPriced += tcgdexPriced;
+      }
+
+      this.logger.log(
+        `Price refresh complete: ${totalPriced}/${slabs.length} slabs priced`,
+      );
+      return totalPriced;
+    } finally {
+      this.isRunning = false;
+    }
+  }
+
+  /**
+   * On-demand pricing for a specific owner (called from summary endpoint).
+   * Uses Pokemon-API.com for graded prices, TCGdex as fallback.
    */
   async fetchPricesForOwner(ownerAddress: string): Promise<number> {
     const slabs = await this.prisma.slab.findMany({
@@ -51,144 +341,180 @@ export class PricingService {
       },
     });
 
-    if (slabs.length === 0) {
-      this.logger.log(`No priceable slabs for ${ownerAddress}`);
+    if (slabs.length === 0) return 0;
+
+    const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+    const now = new Date();
+    const needsPricing = slabs.filter((s) => {
+      const latest = s.prices[0];
+      return !latest || now.getTime() - latest.retrievedAt.getTime() > TWELVE_HOURS;
+    });
+
+    if (needsPricing.length === 0) {
+      this.logger.debug(`All slabs for ${ownerAddress} already priced recently`);
       return 0;
     }
 
-    let priced = 0;
-    let creditsUsed = 0;
-    const now = new Date();
+    this.logger.log(`Pricing ${needsPricing.length} slabs for ${ownerAddress}`);
 
-    for (const slab of slabs) {
-      // Stop if we're close to the credit limit
-      if (creditsUsed >= CREDIT_BUDGET) {
-        this.logger.log(`Credit budget exhausted (${creditsUsed} used), stopping`);
-        break;
-      }
+    // Group by unique card
+    const mkKey = (name: string, set: string | null) =>
+      `${name.toLowerCase()}|${(set ?? '').toLowerCase()}`;
 
-      // Skip if we already have a recent price
-      const latestPrice = slab.prices[0];
-      if (latestPrice && now.getTime() - latestPrice.retrievedAt.getTime() < PRICE_TTL_MS) {
-        continue;
-      }
-
-      if (!slab.cardName) continue;
-
-      // Search by card name only — set names from Courtyard are too specific
-      // and don't match the API's TCGPlayer-based set names
-      const query = slab.cardName;
-
-      // Rate limit: wait before each request
-      await sleep(REQUEST_DELAY_MS);
-
-      // Search with graded data (2 credits: 1 for card + 1 for eBay data)
-      const cards = await this.priceTrackerService.searchCards(query, true);
-
-      // null = rate limited (429), don't count credits, back off and retry
-      if (cards === null) {
-        this.logger.warn('Rate limited by PriceTracker, backing off 5s');
-        await sleep(5000);
-        continue;
-      }
-
-      creditsUsed += 2;
-
-      if (cards.length === 0) {
-        this.logger.debug(`No results for "${query}"`);
-        continue;
-      }
-
-      // Use the first result (best match)
-      const card = cards[0];
-      const extracted = this.extractGradedPrice(card, slab.grader, slab.grade);
-
-      if (!extracted) {
-        this.logger.debug(`No price extracted for "${query}"`);
-        continue;
-      }
-
-      await this.prisma.price.create({
-        data: {
-          slabId: slab.id,
-          source: 'price_tracker',
-          marketPrice: extracted.marketPrice,
-          currency: 'USD',
-          confidence: extracted.confidence,
-          retrievedAt: new Date(),
-          rawResponse: card as any,
-        },
-      });
-
-      priced++;
-      this.logger.debug(
-        `Priced "${slab.cardName}" (${slab.grader} ${slab.grade}) → $${extracted.marketPrice} [${extracted.confidence}]`,
-      );
+    const cardGroups = new Map<string, typeof needsPricing>();
+    for (const slab of needsPricing) {
+      const key = mkKey(slab.cardName!, slab.setName);
+      if (!cardGroups.has(key)) cardGroups.set(key, []);
+      cardGroups.get(key)!.push(slab);
     }
 
-    this.logger.log(`Priced ${priced}/${slabs.length} slabs for ${ownerAddress} (${creditsUsed} credits used)`);
-    return priced;
-  }
+    let priced = 0;
+    const pricedSlabIds = new Set<string>();
 
-  /**
-   * Extract grade-specific price from PokemonPriceTracker eBay sales data.
-   *
-   * Response structure: ebay.salesByGrade.{grader}{grade}
-   *   PSA 10 → salesByGrade.psa10.smartMarketPrice.price (preferred) or averagePrice
-   *   CGC 9.5 → salesByGrade.cgc10 (rounded) or cgc9
-   *   BGS 10 → salesByGrade.bgs10
-   *
-   * Falls back to raw card market price if no grade-specific data.
-   */
-  private extractGradedPrice(
-    card: PriceTrackerCard,
-    grader: string | null,
-    grade: string | null,
-  ): { marketPrice: number; confidence: string } | null {
-    const salesByGrade = card.ebay?.salesByGrade;
+    // Phase 1: Pokemon-API.com
+    if (this.pokemonApiService.isAvailable()) {
+      for (const [, groupSlabs] of cardGroups) {
+        const rep = groupSlabs[0];
+        await sleep(POKEMON_API_DELAY_MS);
+        const results = await this.pokemonApiService.searchCards(
+          rep.cardName!,
+          rep.setName ?? undefined,
+        );
+        if (results.length === 0) continue;
 
-    if (salesByGrade && grader && grade) {
-      const graderKey = grader.toLowerCase();
-      const gradeNum = Math.round(parseFloat(grade));
-      const ebayKey = `${graderKey}${gradeNum}`;
+        const match = this.pokemonApiService.findBestMatch(
+          results,
+          rep.cardName!,
+          rep.setName ?? undefined,
+          rep.cardNumber ?? undefined,
+        );
+        if (!match) continue;
 
-      const gradeData = salesByGrade[ebayKey];
-      if (gradeData) {
-        // Prefer smartMarketPrice (weighted/filtered), fall back to averagePrice
-        const price = gradeData.smartMarketPrice?.price ?? gradeData.averagePrice;
-        if (price && price > 0) {
-          const confidence = gradeData.smartMarketPrice?.confidence ?? 'medium';
-          return {
-            marketPrice: Math.round(price * 100) / 100,
-            confidence,
-          };
-        }
-      }
+        for (const slab of groupSlabs) {
+          const gradedPrice = slab.grader && slab.grade
+            ? this.pokemonApiService.extractGradedPrice(match, slab.grader, slab.grade)
+            : null;
 
-      // Try same grade number with other common graders
-      for (const g of ['psa', 'bgs', 'cgc', 'sgc']) {
-        if (g === graderKey) continue;
-        const fallbackData = salesByGrade[`${g}${gradeNum}`];
-        if (fallbackData) {
-          const price = fallbackData.smartMarketPrice?.price ?? fallbackData.averagePrice;
-          if (price && price > 0) {
-            return {
-              marketPrice: Math.round(price * 100) / 100,
-              confidence: 'medium',
-            };
+          if (gradedPrice) {
+            await this.prisma.price.create({
+              data: {
+                slabId: slab.id,
+                source: 'pokemon-api',
+                marketPrice: gradedPrice.price,
+                currency: gradedPrice.currency,
+                confidence: 'high',
+                retrievedAt: new Date(),
+                rawResponse: {
+                  pokemonApiCardId: match.id,
+                  gradedSource: gradedPrice.source,
+                  grader: slab.grader,
+                  grade: slab.grade,
+                } as any,
+              },
+            });
+            pricedSlabIds.add(slab.id);
+            priced++;
+          } else {
+            const rawPrice = this.pokemonApiService.extractRawPrice(match);
+            if (rawPrice) {
+              const multiplier = getGradeMultiplier(slab.grader, slab.grade);
+              await this.prisma.price.create({
+                data: {
+                  slabId: slab.id,
+                  source: 'pokemon-api',
+                  marketPrice: Math.round(rawPrice.price * multiplier * 100) / 100,
+                  currency: rawPrice.currency,
+                  confidence: 'medium',
+                  retrievedAt: new Date(),
+                  rawResponse: {
+                    pokemonApiCardId: match.id,
+                    rawPrice: rawPrice.price,
+                    gradeMultiplier: multiplier,
+                    grader: slab.grader,
+                    grade: slab.grade,
+                  } as any,
+                },
+              });
+              pricedSlabIds.add(slab.id);
+              priced++;
+            }
           }
         }
       }
     }
 
-    // Fallback: raw card market price (not grade-specific)
-    if (card.prices?.market && card.prices.market > 0) {
-      return {
-        marketPrice: Math.round(card.prices.market * 100) / 100,
-        confidence: 'low',
-      };
+    // Phase 2: TCGdex fallback
+    const remaining = needsPricing.filter((s) => !pricedSlabIds.has(s.id));
+    if (remaining.length > 0) {
+      const cardRefs = await this.prisma.cardReference.findMany({
+        select: { ptcgCardId: true, cardName: true, cardNumber: true, setName: true },
+      });
+      const refByNameSet = new Map<string, string>();
+      const refByNumSet = new Map<string, string>();
+      for (const ref of cardRefs) {
+        refByNameSet.set(
+          `${ref.cardName.toLowerCase()}|${ref.setName.toLowerCase()}`,
+          ref.ptcgCardId,
+        );
+        refByNumSet.set(
+          `${ref.cardNumber}|${ref.setName.toLowerCase()}`,
+          ref.ptcgCardId,
+        );
+      }
+
+      const cardIdToSlabs = new Map<string, typeof remaining>();
+      for (const slab of remaining) {
+        const setKey = (slab.setName ?? '').toLowerCase();
+        const ptcgCardId =
+          refByNameSet.get(`${slab.cardName!.toLowerCase()}|${setKey}`) ??
+          (slab.cardNumber ? refByNumSet.get(`${slab.cardNumber}|${setKey}`) : null);
+        if (ptcgCardId) {
+          if (!cardIdToSlabs.has(ptcgCardId)) cardIdToSlabs.set(ptcgCardId, []);
+          cardIdToSlabs.get(ptcgCardId)!.push(slab);
+        }
+      }
+
+      for (const [tcgCardId, cardSlabs] of cardIdToSlabs) {
+        await sleep(TCGDEX_DELAY_MS);
+        const cardPricing = await this.pokemonTcgService.getCardPricing(tcgCardId);
+        if (!cardPricing?.pricing) continue;
+
+        const rawPrice = this.pokemonTcgService.extractMarketPrice(cardPricing.pricing);
+        if (!rawPrice) continue;
+
+        for (const slab of cardSlabs) {
+          const multiplier = getGradeMultiplier(slab.grader, slab.grade);
+          await this.prisma.price.create({
+            data: {
+              slabId: slab.id,
+              source: 'tcgdex',
+              marketPrice: Math.round(rawPrice.price * multiplier * 100) / 100,
+              currency: rawPrice.currency,
+              confidence: multiplier > 1 ? 'low' : 'medium',
+              retrievedAt: new Date(),
+              rawResponse: {
+                rawPrice: rawPrice.price,
+                variant: rawPrice.variant,
+                gradeMultiplier: multiplier,
+                grader: slab.grader,
+                grade: slab.grade,
+              } as any,
+            },
+          });
+          priced++;
+        }
+      }
     }
 
-    return null;
+    this.logger.log(`Priced ${priced}/${needsPricing.length} slabs for ${ownerAddress}`);
+    return priced;
+  }
+
+  private async flushPrices(
+    inserts: Parameters<typeof this.prisma.price.create>[0]['data'][],
+  ) {
+    await Promise.all(
+      inserts.map((data) => this.prisma.price.create({ data })),
+    );
   }
 }

@@ -58,7 +58,7 @@ export class PublicService {
 
   async getAddressSlabs(
     address: string,
-    query: { set?: string; q?: string; grade?: string; page?: number },
+    query: { set?: string; q?: string; grade?: string; sort?: 'price_asc' | 'price_desc'; page?: number },
   ) {
     return this.slabsService.getSlabsByOwner({
       ownerAddress: address.toLowerCase(),
@@ -72,5 +72,12 @@ export class PublicService {
 
   async getAddressSets(address: string) {
     return this.setsService.getSetProgressByOwner(address.toLowerCase());
+  }
+
+  async getAddressSetDetail(address: string, setName: string) {
+    return this.setsService.getSetDetailForOwner(
+      address.toLowerCase(),
+      setName,
+    );
   }
 }

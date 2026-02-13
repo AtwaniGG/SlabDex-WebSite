@@ -11,10 +11,9 @@ export default async function AddressDashboard({ params }: Props) {
   let slabsResult;
 
   try {
-    [summary, slabsResult] = await Promise.all([
-      api.getAddressSummary(params.address),
-      api.getAddressSlabs(params.address),
-    ]);
+    // Summary must complete first — it triggers indexing for new addresses
+    summary = await api.getAddressSummary(params.address);
+    slabsResult = await api.getAddressSlabs(params.address);
   } catch {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">

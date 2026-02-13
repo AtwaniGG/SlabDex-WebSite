@@ -6,6 +6,8 @@ import SlabCard from './SlabCard';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
+type SortOption = '' | 'price_desc' | 'price_asc';
+
 interface SlabListPaginatedProps {
   address: string;
   initialData: PaginatedSlabs;
@@ -14,27 +16,40 @@ interface SlabListPaginatedProps {
 export default function SlabListPaginated({ address, initialData }: SlabListPaginatedProps) {
   const [slabs, setSlabs] = useState<SlabItem[]>(initialData.data);
   const [page, setPage] = useState(initialData.pagination.page);
+  const [total, setTotal] = useState(initialData.pagination.total);
   const [loading, setLoading] = useState(false);
-  const total = initialData.pagination.total;
+  const [sort, setSort] = useState<SortOption>('');
   const hasMore = slabs.length < total;
 
-  async function loadMore() {
+  async function fetchSlabs(sortVal: SortOption, pageNum: number, append: boolean) {
     setLoading(true);
     try {
-      const nextPage = page + 1;
-      const res = await fetch(`${API_BASE}/public/address/${address}/slabs?page=${nextPage}`);
+      const params = new URLSearchParams();
+      params.set('page', String(pageNum));
+      if (sortVal) params.set('sort', sortVal);
+      const res = await fetch(`${API_BASE}/public/address/${address}/slabs?${params}`);
       if (!res.ok) throw new Error('Failed to fetch');
       const data: PaginatedSlabs = await res.json();
-      setSlabs((prev) => [...prev, ...data.data]);
-      setPage(nextPage);
+      setSlabs((prev) => append ? [...prev, ...data.data] : data.data);
+      setPage(pageNum);
+      setTotal(data.pagination.total);
     } catch (e) {
-      console.error('Failed to load more slabs:', e);
+      console.error('Failed to load slabs:', e);
     } finally {
       setLoading(false);
     }
   }
 
-  if (slabs.length === 0) {
+  function handleSortChange(newSort: SortOption) {
+    setSort(newSort);
+    fetchSlabs(newSort, 1, false);
+  }
+
+  function loadMore() {
+    fetchSlabs(sort, page + 1, true);
+  }
+
+  if (slabs.length === 0 && !loading) {
     return (
       <div className="text-center py-12 text-gray-500">
         <p className="text-lg">No slabs found</p>
@@ -45,6 +60,18 @@ export default function SlabListPaginated({ address, initialData }: SlabListPagi
 
   return (
     <div>
+      <div className="flex justify-end mb-4">
+        <select
+          value={sort}
+          onChange={(e) => handleSortChange(e.target.value as SortOption)}
+          className="bg-gray-800 border border-gray-700 text-sm text-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-pokeblue"
+        >
+          <option value="">Newest First</option>
+          <option value="price_desc">Price: High to Low</option>
+          <option value="price_asc">Price: Low to High</option>
+        </select>
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {slabs.map((slab) => (
           <SlabCard key={slab.id} slab={slab} />

@@ -189,6 +189,8 @@ model SetReference {
   totalCards  Int     @map("total_cards")
   releaseYear Int?    @map("release_year")
   generation  String?
+  logoUrl     String? @map("logo_url")
+  symbolUrl   String? @map("symbol_url")
 
   cards CardReference[]
 
