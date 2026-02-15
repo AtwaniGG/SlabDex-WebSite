@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { SlabsService } from '../slabs/slabs.service';
+import { SlabsService, SortOption } from '../slabs/slabs.service';
 import { SetsService } from '../sets/sets.service';
 import { IndexingService } from '../indexing/indexing.service';
 import { PricingService } from '../pricing/pricing.service';
@@ -58,7 +58,7 @@ export class PublicService {
 
   async getAddressSlabs(
     address: string,
-    query: { set?: string; q?: string; grade?: string; sort?: 'price_asc' | 'price_desc'; page?: number },
+    query: { set?: string; q?: string; grade?: string; sort?: SortOption; page?: number },
   ) {
     return this.slabsService.getSlabsByOwner({
       ownerAddress: address.toLowerCase(),

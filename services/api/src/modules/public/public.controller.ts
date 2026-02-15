@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { PublicService } from './public.service';
+import type { SortOption } from '../slabs/slabs.service';
 
 @Controller('public')
 export class PublicController {
@@ -23,7 +24,7 @@ export class PublicController {
       set,
       q,
       grade,
-      sort: sort as 'price_asc' | 'price_desc' | undefined,
+      sort: sort as SortOption | undefined,
       page: page ? parseInt(page, 10) : undefined,
     });
   }

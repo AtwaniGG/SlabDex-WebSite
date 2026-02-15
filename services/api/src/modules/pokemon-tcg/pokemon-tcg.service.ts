@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-const TCGDEX_BASE = 'https://api.tcgdex.net/v2/en';
+const TCGDEX_EN = 'https://api.tcgdex.net/v2/en';
+const TCGDEX_JP = 'https://api.tcgdex.net/v2/ja';
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 3000;
 
@@ -74,6 +75,21 @@ interface TcgdexSetDetail {
   cards?: { id: string; localId: string; name: string; image?: string }[];
 }
 
+/** Full card detail from TCGdex (EN or JP) — used for sort metadata. */
+export interface TcgdexCardDetail {
+  id: string;
+  localId: string;
+  name: string;
+  rarity?: string;
+  category?: string; // Pokemon | Trainer | Energy
+  dexId?: number[];
+  hp?: number;
+  types?: string[];
+  stage?: string;
+  image?: string;
+  set?: { id: string; name: string };
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -109,7 +125,7 @@ export class PokemonTcgService {
 
   async getAllSets(): Promise<PtcgSet[]> {
     const res = await this.fetchWithRetry(
-      `${TCGDEX_BASE}/sets`,
+      `${TCGDEX_EN}/sets`,
       'TCGdex /sets',
     );
     if (!res) return [];
@@ -121,7 +137,7 @@ export class PokemonTcgService {
     const sets: PtcgSet[] = [];
     for (const item of data) {
       const detailRes = await this.fetchWithRetry(
-        `${TCGDEX_BASE}/sets/${item.id}`,
+        `${TCGDEX_EN}/sets/${item.id}`,
         `TCGdex /sets/${item.id}`,
       );
       if (!detailRes) continue;
@@ -143,7 +159,7 @@ export class PokemonTcgService {
 
   /** Fast: single request, returns id/name/logo only (no series/releaseDate). */
   async getAllSetLogos(): Promise<{ id: string; name: string; logo: string | null; symbol: string | null }[]> {
-    const res = await this.fetchWithRetry(`${TCGDEX_BASE}/sets`, 'TCGdex /sets (logos)');
+    const res = await this.fetchWithRetry(`${TCGDEX_EN}/sets`, 'TCGdex /sets (logos)');
     if (!res) return [];
     const data: TcgdexSetListItem[] = await res.json();
     return data.map((item) => ({
@@ -160,7 +176,7 @@ export class PokemonTcgService {
    */
   async getCardPricing(cardId: string): Promise<TcgdexCardPricing | null> {
     const res = await this.fetchWithRetry(
-      `${TCGDEX_BASE}/cards/${cardId}`,
+      `${TCGDEX_EN}/cards/${cardId}`,
       `TCGdex /cards/${cardId} (pricing)`,
     );
     if (!res) return null;
@@ -217,7 +233,7 @@ export class PokemonTcgService {
 
   async getCardsForSet(setId: string): Promise<PtcgCard[]> {
     const res = await this.fetchWithRetry(
-      `${TCGDEX_BASE}/sets/${setId}`,
+      `${TCGDEX_EN}/sets/${setId}`,
       `TCGdex /sets/${setId} (cards)`,
     );
     if (!res) return [];
@@ -234,5 +250,93 @@ export class PokemonTcgService {
         ? { small: `${card.image}/low.webp`, large: `${card.image}/high.webp` }
         : undefined,
     }));
+  }
+
+  // ── TCGdex JP methods (for sort metadata) ──
+
+  /** List all JP sets from TCGdex. */
+  async getJpSets(): Promise<TcgdexSetListItem[]> {
+    const res = await this.fetchWithRetry(`${TCGDEX_JP}/sets`, 'TCGdex JP /sets');
+    if (!res) return [];
+    return res.json();
+  }
+
+  /** Get JP set detail including card list. */
+  async getJpSetDetail(setId: string): Promise<TcgdexSetDetail | null> {
+    const res = await this.fetchWithRetry(
+      `${TCGDEX_JP}/sets/${setId}`,
+      `TCGdex JP /sets/${setId}`,
+    );
+    if (!res) return null;
+    return res.json();
+  }
+
+  /**
+   * Fetch full card detail from TCGdex (tries EN first, then JP).
+   * Returns dexId, rarity, types, etc. for sort metadata.
+   */
+  async getCardDetail(cardId: string): Promise<TcgdexCardDetail | null> {
+    // Try EN first (has more data like English names)
+    const enRes = await this.fetchWithRetry(
+      `${TCGDEX_EN}/cards/${cardId}`,
+      `TCGdex EN /cards/${cardId}`,
+    );
+    if (enRes) {
+      const data = await enRes.json();
+      if (data?.id) return data as TcgdexCardDetail;
+    }
+
+    // Fallback to JP
+    const jpRes = await this.fetchWithRetry(
+      `${TCGDEX_JP}/cards/${cardId}`,
+      `TCGdex JP /cards/${cardId}`,
+    );
+    if (!jpRes) return null;
+    const data = await jpRes.json();
+    return data?.id ? (data as TcgdexCardDetail) : null;
+  }
+
+  /**
+   * Search for a card by name on TCGdex EN.
+   * Returns sort metadata (dexId, rarity, types).
+   */
+  async searchCardMetadata(
+    cardName: string,
+    setName?: string,
+    cardNumber?: string,
+  ): Promise<{ dexId: number | null; rarity: string | null; cardType: string | null } | null> {
+    const query = encodeURIComponent(cardName);
+    const res = await this.fetchWithRetry(
+      `${TCGDEX_EN}/cards?name=${query}`,
+      `TCGdex search "${cardName}"`,
+    );
+    if (!res) return null;
+
+    const cards: { id: string; localId: string; name: string; set?: { name: string } }[] = await res.json();
+    if (!cards || cards.length === 0) return null;
+
+    // Find best match by set name and/or card number
+    let match = cards[0];
+    if (setName) {
+      const setLower = setName.toLowerCase();
+      const bySet = cards.find((c) => c.set?.name?.toLowerCase() === setLower);
+      if (bySet) match = bySet;
+    }
+    if (cardNumber) {
+      const byNum = cards.find(
+        (c) => c.localId === cardNumber && (!setName || c.set?.name?.toLowerCase() === setName.toLowerCase()),
+      );
+      if (byNum) match = byNum;
+    }
+
+    // Fetch full detail for the matched card
+    const detail = await this.getCardDetail(match.id);
+    if (!detail) return null;
+
+    return {
+      dexId: detail.dexId?.[0] ?? null,
+      rarity: detail.rarity ?? null,
+      cardType: detail.types?.[0] ?? null,
+    };
   }
 }

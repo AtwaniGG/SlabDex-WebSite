@@ -3,8 +3,10 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PokemonTcgService } from '../pokemon-tcg/pokemon-tcg.service';
 import { PokemonApiService } from '../pokemon-tcg/pokemon-api.service';
+import { JustTcgService } from './justtcg.service';
 
 const TCGDEX_DELAY_MS = 300;
+const JUSTTCG_DELAY_MS = 100; // 1000 calls/day, can be faster
 const POKEMON_API_DELAY_MS = 700; // ~100 req/day limit, be conservative
 const BATCH_SIZE = 20;
 
@@ -41,6 +43,7 @@ export class PricingService {
     private prisma: PrismaService,
     private pokemonTcgService: PokemonTcgService,
     private pokemonApiService: PokemonApiService,
+    private justTcgService: JustTcgService,
   ) {}
 
   async getLatestPrice(slabId: string) {
@@ -235,8 +238,91 @@ export class PricingService {
         );
       }
 
-      // ── Phase 2: TCGdex fallback for remaining slabs ──
-      const unpricedSlabs = slabs.filter((s) => !pricedSlabIds.has(s.id));
+      // ── Phase 2: JustTCG (raw prices, supports EN + JP, 1000 calls/day) ──
+      let unpricedSlabs = slabs.filter((s) => !pricedSlabIds.has(s.id));
+
+      if (unpricedSlabs.length > 0 && this.justTcgService.isConfigured) {
+        this.logger.log(
+          `JustTCG: pricing ${unpricedSlabs.length} remaining slabs`,
+        );
+
+        // Group remaining by unique card
+        const unpricedGroups = new Map<string, typeof unpricedSlabs>();
+        for (const slab of unpricedSlabs) {
+          const key = mkKey(slab.cardName!, slab.setName);
+          if (!unpricedGroups.has(key)) unpricedGroups.set(key, []);
+          unpricedGroups.get(key)!.push(slab);
+        }
+
+        let justTcgPriced = 0;
+        for (const [, groupSlabs] of unpricedGroups) {
+          const rep = groupSlabs[0];
+          await sleep(JUSTTCG_DELAY_MS);
+
+          // Try English first, then Japanese
+          let results = await this.justTcgService.searchCard(
+            rep.cardName!,
+            rep.setName ?? undefined,
+            'pokemon',
+          );
+          if (!results || results.length === 0) {
+            results = await this.justTcgService.searchCard(
+              rep.cardName!,
+              rep.setName ?? undefined,
+              'pokemon-japan',
+            );
+          }
+          if (!results || results.length === 0) continue;
+
+          // Find best match
+          const match = results.find((c) =>
+            c.name.toLowerCase().includes(rep.cardName!.toLowerCase()) ||
+            rep.cardName!.toLowerCase().includes(c.name.toLowerCase()),
+          ) ?? results[0];
+
+          const rawPrice = this.justTcgService.extractPrice(match);
+          if (!rawPrice || rawPrice <= 0) continue;
+
+          for (const slab of groupSlabs) {
+            const multiplier = getGradeMultiplier(slab.grader, slab.grade);
+            priceInserts.push({
+              slabId: slab.id,
+              source: 'justtcg',
+              marketPrice: Math.round(rawPrice * multiplier * 100) / 100,
+              currency: 'USD',
+              confidence: 'medium',
+              retrievedAt: now,
+              rawResponse: {
+                justTcgCardId: match.id,
+                cardName: match.name,
+                setName: match.set_name,
+                rawPrice,
+                gradeMultiplier: multiplier,
+                grader: slab.grader,
+                grade: slab.grade,
+              } as any,
+            });
+            pricedSlabIds.add(slab.id);
+            justTcgPriced++;
+          }
+
+          if (priceInserts.length >= BATCH_SIZE) {
+            await this.flushPrices(priceInserts);
+            priceInserts.length = 0;
+          }
+        }
+
+        if (priceInserts.length > 0) {
+          await this.flushPrices(priceInserts);
+          priceInserts.length = 0;
+        }
+
+        this.logger.log(`JustTCG done: ${justTcgPriced} additional slabs priced`);
+        totalPriced += justTcgPriced;
+      }
+
+      // ── Phase 3: TCGdex fallback for any still unpriced ──
+      unpricedSlabs = slabs.filter((s) => !pricedSlabIds.has(s.id));
 
       if (unpricedSlabs.length > 0) {
         this.logger.log(
@@ -443,8 +529,68 @@ export class PricingService {
       }
     }
 
-    // Phase 2: TCGdex fallback
-    const remaining = needsPricing.filter((s) => !pricedSlabIds.has(s.id));
+    // Phase 2: JustTCG (EN + JP support, 1000/day)
+    let remaining = needsPricing.filter((s) => !pricedSlabIds.has(s.id));
+    if (remaining.length > 0 && this.justTcgService.isConfigured) {
+      const remainingGroups = new Map<string, typeof remaining>();
+      for (const slab of remaining) {
+        const key = mkKey(slab.cardName!, slab.setName);
+        if (!remainingGroups.has(key)) remainingGroups.set(key, []);
+        remainingGroups.get(key)!.push(slab);
+      }
+
+      for (const [, groupSlabs] of remainingGroups) {
+        const rep = groupSlabs[0];
+        await sleep(JUSTTCG_DELAY_MS);
+        let results = await this.justTcgService.searchCard(
+          rep.cardName!,
+          rep.setName ?? undefined,
+          'pokemon',
+        );
+        if (!results || results.length === 0) {
+          results = await this.justTcgService.searchCard(
+            rep.cardName!,
+            rep.setName ?? undefined,
+            'pokemon-japan',
+          );
+        }
+        if (!results || results.length === 0) continue;
+
+        const match = results.find((c) =>
+          c.name.toLowerCase().includes(rep.cardName!.toLowerCase()) ||
+          rep.cardName!.toLowerCase().includes(c.name.toLowerCase()),
+        ) ?? results[0];
+
+        const rawPrice = this.justTcgService.extractPrice(match);
+        if (!rawPrice || rawPrice <= 0) continue;
+
+        for (const slab of groupSlabs) {
+          const multiplier = getGradeMultiplier(slab.grader, slab.grade);
+          await this.prisma.price.create({
+            data: {
+              slabId: slab.id,
+              source: 'justtcg',
+              marketPrice: Math.round(rawPrice * multiplier * 100) / 100,
+              currency: 'USD',
+              confidence: 'medium',
+              retrievedAt: new Date(),
+              rawResponse: {
+                justTcgCardId: match.id,
+                rawPrice,
+                gradeMultiplier: multiplier,
+                grader: slab.grader,
+                grade: slab.grade,
+              } as any,
+            },
+          });
+          pricedSlabIds.add(slab.id);
+          priced++;
+        }
+      }
+    }
+
+    // Phase 3: TCGdex fallback
+    remaining = needsPricing.filter((s) => !pricedSlabIds.has(s.id));
     if (remaining.length > 0) {
       const cardRefs = await this.prisma.cardReference.findMany({
         select: { ptcgCardId: true, cardName: true, cardNumber: true, setName: true },

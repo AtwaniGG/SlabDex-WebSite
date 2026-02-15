@@ -17,6 +17,9 @@ export class CatalogSeedService implements OnModuleInit {
 
   async onModuleInit() {
     this.seed().catch((e) => this.logger.error(`Catalog seed failed: ${e}`));
+    this.backfillSortMetadata().catch((e) =>
+      this.logger.error(`Sort metadata backfill failed: ${e}`),
+    );
   }
 
   async seed() {
@@ -267,5 +270,113 @@ export class CatalogSeedService implements OnModuleInit {
       }
     }
     this.logger.log(`Logo backfill complete (${updated} sets updated)`);
+  }
+
+  /**
+   * Backfill dexId, rarity, and cardType on slabs using TCGdex EN + JP.
+   * Matches by CardReference (ptcgCardId) first, then by name search.
+   */
+  private async backfillSortMetadata() {
+    const slabsNeedingMeta = await this.prisma.slab.count({
+      where: {
+        cardName: { not: null },
+        dexId: null,
+      },
+    });
+
+    if (slabsNeedingMeta === 0) return;
+
+    this.logger.log(
+      `Backfilling sort metadata for ${slabsNeedingMeta} slabs...`,
+    );
+
+    // Load all CardReferences to map slab → ptcgCardId
+    const cardRefs = await this.prisma.cardReference.findMany({
+      select: { ptcgCardId: true, cardName: true, cardNumber: true, setName: true },
+    });
+    const refByNameSet = new Map<string, string>();
+    const refByNumSet = new Map<string, string>();
+    for (const ref of cardRefs) {
+      refByNameSet.set(
+        `${ref.cardName.toLowerCase()}|${ref.setName.toLowerCase()}`,
+        ref.ptcgCardId,
+      );
+      refByNumSet.set(
+        `${ref.cardNumber}|${ref.setName.toLowerCase()}`,
+        ref.ptcgCardId,
+      );
+    }
+
+    // Process slabs in batches
+    const BATCH = 50;
+    let offset = 0;
+    let filled = 0;
+
+    while (true) {
+      const slabs = await this.prisma.slab.findMany({
+        where: { cardName: { not: null }, dexId: null },
+        select: { id: true, cardName: true, cardNumber: true, setName: true },
+        take: BATCH,
+        skip: offset,
+      });
+      if (slabs.length === 0) break;
+
+      for (const slab of slabs) {
+        const setKey = (slab.setName ?? '').toLowerCase();
+
+        // Try matching via CardReference first (fast, uses cached TCGdex EN data)
+        const ptcgCardId =
+          refByNameSet.get(`${slab.cardName!.toLowerCase()}|${setKey}`) ??
+          (slab.cardNumber ? refByNumSet.get(`${slab.cardNumber}|${setKey}`) : null);
+
+        let meta: { dexId: number | null; rarity: string | null; cardType: string | null } | null = null;
+
+        if (ptcgCardId) {
+          const detail = await this.pokemonTcgService.getCardDetail(ptcgCardId);
+          if (detail) {
+            meta = {
+              dexId: detail.dexId?.[0] ?? null,
+              rarity: detail.rarity ?? null,
+              cardType: detail.types?.[0] ?? null,
+            };
+          }
+        }
+
+        // Fallback: search TCGdex EN by name
+        if (!meta) {
+          meta = await this.pokemonTcgService.searchCardMetadata(
+            slab.cardName!,
+            slab.setName ?? undefined,
+            slab.cardNumber ?? undefined,
+          );
+        }
+
+        if (meta && (meta.dexId || meta.rarity || meta.cardType)) {
+          await this.prisma.slab.update({
+            where: { id: slab.id },
+            data: {
+              dexId: meta.dexId,
+              rarity: meta.rarity,
+              cardType: meta.cardType,
+            },
+          });
+          filled++;
+        } else {
+          // Set dexId to 0 so we don't retry this slab
+          await this.prisma.slab.update({
+            where: { id: slab.id },
+            data: { dexId: 0 },
+          });
+        }
+
+        // Rate limit: TCGdex is free but be polite
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      this.logger.log(`  Sort metadata: ${filled} slabs filled so far...`);
+      // Don't increment offset — we always query where dexId is null
+    }
+
+    this.logger.log(`Sort metadata backfill complete: ${filled} slabs filled`);
   }
 }

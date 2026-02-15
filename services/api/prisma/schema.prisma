@@ -129,10 +129,14 @@ model Slab {
   certNumber      String?  @map("cert_number")
   grader          String?
   grade           String?
+  language        String   @default("en")
   setName         String?  @map("set_name")
   cardName        String?  @map("card_name")
   cardNumber      String?  @map("card_number")
   variant         String?
+  dexId           Int?     @map("dex_id")
+  rarity          String?
+  cardType        String?  @map("card_type") // Grass, Fire, Water, etc.
   imageUrl        String?  @map("image_url")
   fingerprintText String?  @map("fingerprint_text")
   parseStatus     String   @default("fail") @map("parse_status") // ok | partial | fail
@@ -189,6 +193,7 @@ model SetReference {
   totalCards  Int     @map("total_cards")
   releaseYear Int?    @map("release_year")
   generation  String?
+  language    String  @default("en")
   logoUrl     String? @map("logo_url")
   symbolUrl   String? @map("symbol_url")
 

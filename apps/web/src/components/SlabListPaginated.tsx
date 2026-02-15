@@ -6,7 +6,7 @@ import SlabCard from './SlabCard';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
-type SortOption = '' | 'price_desc' | 'price_asc';
+type SortOption = '' | 'price_desc' | 'price_asc' | 'card_number' | 'name_asc' | 'name_desc' | 'pokedex' | 'rarity';
 
 interface SlabListPaginatedProps {
   address: string;
@@ -69,6 +69,11 @@ export default function SlabListPaginated({ address, initialData }: SlabListPagi
           <option value="">Newest First</option>
           <option value="price_desc">Price: High to Low</option>
           <option value="price_asc">Price: Low to High</option>
+          <option value="card_number">Card Number</option>
+          <option value="name_asc">Name: A to Z</option>
+          <option value="name_desc">Name: Z to A</option>
+          <option value="pokedex">Pokedex Number</option>
+          <option value="rarity">Rarity</option>
         </select>
       </div>
 

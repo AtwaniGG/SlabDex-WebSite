@@ -2,12 +2,21 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '@pokedex-slabs/shared';
 
+export type SortOption =
+  | 'price_asc'
+  | 'price_desc'
+  | 'card_number'
+  | 'name_asc'
+  | 'name_desc'
+  | 'pokedex'
+  | 'rarity';
+
 export interface SlabsQuery {
   ownerAddress: string;
   set?: string;
   q?: string;
   grade?: string;
-  sort?: 'price_asc' | 'price_desc';
+  sort?: SortOption;
   page?: number;
   pageSize?: number;
 }
@@ -39,9 +48,17 @@ export class SlabsService {
       ];
     }
 
-    const sortByPrice = query.sort === 'price_asc' || query.sort === 'price_desc';
+    // DB-level sorts that Prisma can handle directly
+    const dbSortMap: Record<string, Record<string, string>[]> = {
+      card_number: [{ cardNumber: 'asc' }],
+      name_asc: [{ cardName: 'asc' }],
+      name_desc: [{ cardName: 'desc' }],
+      pokedex: [{ dexId: 'asc' }],
+    };
 
-    // When sorting by price, fetch all then sort in-memory (price is on a relation)
+    const inMemorySort = query.sort === 'price_asc' || query.sort === 'price_desc' || query.sort === 'rarity';
+    const dbSort = query.sort && dbSortMap[query.sort];
+
     const [allSlabs, total] = await Promise.all([
       this.prisma.slab.findMany({
         where,
@@ -51,9 +68,11 @@ export class SlabsService {
             take: 1,
           },
         },
-        orderBy: sortByPrice ? undefined : { createdAt: 'desc' },
-        skip: sortByPrice ? undefined : skip,
-        take: sortByPrice ? undefined : pageSize,
+        orderBy: inMemorySort
+          ? undefined
+          : dbSort ?? [{ createdAt: 'desc' }],
+        skip: inMemorySort ? undefined : skip,
+        take: inMemorySort ? undefined : pageSize,
       }),
       this.prisma.slab.count({ where }),
     ]);
@@ -70,20 +89,37 @@ export class SlabsService {
       imageUrl: slab.imageUrl,
       parseStatus: slab.parseStatus,
       platform: slab.platform,
+      dexId: slab.dexId,
+      rarity: slab.rarity,
+      cardType: slab.cardType,
       marketPrice: slab.prices[0]?.marketPrice ? Number(slab.prices[0].marketPrice) : null,
       priceCurrency: slab.prices[0]?.currency ?? null,
       priceRetrievedAt: slab.prices[0]?.retrievedAt ?? null,
     }));
 
-    if (sortByPrice) {
-      mapped.sort((a, b) => {
-        const aPrice = a.marketPrice ?? (query.sort === 'price_asc' ? Infinity : -1);
-        const bPrice = b.marketPrice ?? (query.sort === 'price_asc' ? Infinity : -1);
-        return query.sort === 'price_asc' ? aPrice - bPrice : bPrice - aPrice;
-      });
+    if (inMemorySort) {
+      if (query.sort === 'price_asc' || query.sort === 'price_desc') {
+        mapped.sort((a, b) => {
+          const aPrice = a.marketPrice ?? (query.sort === 'price_asc' ? Infinity : -1);
+          const bPrice = b.marketPrice ?? (query.sort === 'price_asc' ? Infinity : -1);
+          return query.sort === 'price_asc' ? aPrice - bPrice : bPrice - aPrice;
+        });
+      } else if (query.sort === 'rarity') {
+        const rarityOrder: Record<string, number> = {
+          'Secret Rare': 0, 'Illustration Rare': 1, 'Special Art Rare': 2,
+          'Ultra Rare': 3, 'Rare Holo VMAX': 4, 'Rare Holo V': 5,
+          'Double Rare': 6, 'Rare Holo': 7, 'Rare': 8,
+          'Uncommon': 9, 'Common': 10, 'None': 11,
+        };
+        mapped.sort((a, b) => {
+          const aR = a.rarity ? (rarityOrder[a.rarity] ?? 8) : 99;
+          const bR = b.rarity ? (rarityOrder[b.rarity] ?? 8) : 99;
+          return aR - bR;
+        });
+      }
     }
 
-    const data = sortByPrice ? mapped.slice(skip, skip + pageSize) : mapped;
+    const data = inMemorySort ? mapped.slice(skip, skip + pageSize) : mapped;
 
     return {
       data,
