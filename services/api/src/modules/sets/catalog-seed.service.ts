@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PokemonTcgService } from '../pokemon-tcg/pokemon-tcg.service';
-import { POKELLECTOR_LOGOS } from '../../data/jp-sets';
+import { POKELLECTOR_LOGOS, SET_TOTAL_CARDS } from '../../data/jp-sets';
 
 // Skip re-seed if data was seeded within this window
 const STALE_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -17,6 +17,9 @@ export class CatalogSeedService implements OnModuleInit {
 
   async onModuleInit() {
     this.seed().catch((e) => this.logger.error(`Catalog seed failed: ${e}`));
+    this.backfillTotalCards().catch((e) =>
+      this.logger.error(`TotalCards backfill failed: ${e}`),
+    );
     this.backfillSortMetadata().catch((e) =>
       this.logger.error(`Sort metadata backfill failed: ${e}`),
     );
@@ -158,6 +161,36 @@ export class CatalogSeedService implements OnModuleInit {
     );
   }
 
+  /** Backfill totalCards for sets with 0 using static SET_TOTAL_CARDS map. */
+  private async backfillTotalCards() {
+    const setsWithZero = await this.prisma.setReference.findMany({
+      where: { totalCards: 0 },
+      select: { id: true, setName: true },
+    });
+
+    if (setsWithZero.length === 0) return;
+
+    this.logger.log(`Backfilling totalCards for ${setsWithZero.length} sets...`);
+
+    let updated = 0;
+    for (const dbSet of setsWithZero) {
+      const total = SET_TOTAL_CARDS[dbSet.setName.toLowerCase()];
+      if (total && total > 0) {
+        try {
+          await this.prisma.setReference.update({
+            where: { id: dbSet.id },
+            data: { totalCards: total },
+          });
+          updated++;
+        } catch {
+          // Skip conflicts
+        }
+      }
+    }
+
+    this.logger.log(`TotalCards backfill complete (${updated}/${setsWithZero.length} sets updated)`);
+  }
+
   /** Backfill logoUrl for sets missing logos or with incorrect URLs (no .png extension). */
   private async backfillLogos() {
     const missing = await this.prisma.setReference.count({
@@ -206,12 +239,14 @@ export class CatalogSeedService implements OnModuleInit {
       this.logger.log(`Creating ${orphanSetNames.length} missing SetReference records...`);
       for (const row of orphanSetNames) {
         const name = (row as any).set_name as string;
-        const pkLogo = POKELLECTOR_LOGOS[name.toLowerCase()] ?? null;
+        const nameKey = name.toLowerCase();
+        const pkLogo = POKELLECTOR_LOGOS[nameKey] ?? null;
+        const totalCards = SET_TOTAL_CARDS[nameKey] ?? 0;
         try {
           await this.prisma.setReference.create({
             data: {
               setName: name,
-              totalCards: 0,
+              totalCards,
               logoUrl: pkLogo,
             },
           });
@@ -374,7 +409,7 @@ export class CatalogSeedService implements OnModuleInit {
       }
 
       this.logger.log(`  Sort metadata: ${filled} slabs filled so far...`);
-      // Don't increment offset — we always query where dexId is null
+      // Don't increment offset - we always query where dexId is null
     }
 
     this.logger.log(`Sort metadata backfill complete: ${filled} slabs filled`);

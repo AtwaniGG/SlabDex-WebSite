@@ -96,4 +96,133 @@ export class PriceTrackerService {
       return [];
     }
   }
+
+  isAvailable(): boolean {
+    return !!this.apiKey;
+  }
+
+  /**
+   * Find the best matching card from search results.
+   * Uses strict matching - never falls back blindly to results[0].
+   */
+  findBestMatch(
+    results: PriceTrackerCard[],
+    cardName: string,
+    setName?: string,
+    cardNumber?: string,
+  ): PriceTrackerCard | null {
+    if (results.length === 0) return null;
+
+    const nameLower = cardName.toLowerCase().trim();
+    const setLower = setName?.toLowerCase().trim();
+    const numLower = cardNumber?.toLowerCase().trim();
+
+    // 1. Exact cardNumber + setName match
+    if (numLower && setLower) {
+      const match = results.find(
+        (c) =>
+          c.cardNumber?.toLowerCase().trim() === numLower &&
+          c.setName?.toLowerCase().trim() === setLower,
+      );
+      if (match) return match;
+    }
+
+    // 2. Exact name + setName match
+    if (setLower) {
+      const match = results.find(
+        (c) =>
+          c.name?.toLowerCase().trim() === nameLower &&
+          c.setName?.toLowerCase().trim() === setLower,
+      );
+      if (match) return match;
+    }
+
+    // 3. Partial name + setName match
+    if (setLower) {
+      const match = results.find((c) => {
+        const cName = c.name?.toLowerCase().trim() ?? '';
+        const cSet = c.setName?.toLowerCase().trim();
+        return (
+          cSet === setLower &&
+          (cName.includes(nameLower) || nameLower.includes(cName))
+        );
+      });
+      if (match) return match;
+    }
+
+    // 4. Exact name match (any set)
+    const byName = results.find(
+      (c) => c.name?.toLowerCase().trim() === nameLower,
+    );
+    if (byName) return byName;
+
+    // 5. Single result with substring match
+    if (results.length === 1) {
+      const rName = results[0].name?.toLowerCase().trim() ?? '';
+      if (rName.includes(nameLower) || nameLower.includes(rName)) {
+        return results[0];
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract graded price from eBay sold data for a specific grade.
+   * Returns the most reliable price available (smartMarketPrice > medianPrice > averagePrice).
+   */
+  extractGradedPrice(
+    card: PriceTrackerCard,
+    grader: string,
+    grade: string,
+  ): { price: number; confidence: 'high' | 'medium'; source: string } | null {
+    const gradeData = card.ebay?.salesByGrade;
+    if (!gradeData) return null;
+
+    const gradeNum = Math.round(parseFloat(grade));
+    if (isNaN(gradeNum)) return null;
+
+    // eBay data keys are typically just the grade number: "10", "9", etc.
+    const entry = gradeData[String(gradeNum)];
+    if (!entry) return null;
+
+    if (entry.smartMarketPrice && entry.smartMarketPrice.price > 0) {
+      return {
+        price: Math.round(entry.smartMarketPrice.price * 100) / 100,
+        confidence: entry.smartMarketPrice.confidence === 'low' ? 'medium' : 'high',
+        source: `price-tracker:ebay:${grader.toLowerCase()}${gradeNum}:smart`,
+      };
+    }
+
+    if (entry.medianPrice && entry.medianPrice > 0) {
+      return {
+        price: Math.round(entry.medianPrice * 100) / 100,
+        confidence: 'medium',
+        source: `price-tracker:ebay:${grader.toLowerCase()}${gradeNum}:median`,
+      };
+    }
+
+    if (entry.averagePrice && entry.averagePrice > 0) {
+      return {
+        price: Math.round(entry.averagePrice * 100) / 100,
+        confidence: 'medium',
+        source: `price-tracker:ebay:${grader.toLowerCase()}${gradeNum}:average`,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract raw (ungraded) market price from a PriceTracker card.
+   */
+  extractRawPrice(card: PriceTrackerCard): { price: number; currency: string } | null {
+    if (card.prices?.market && card.prices.market > 0) {
+      return { price: card.prices.market, currency: 'USD' };
+    }
+    if (card.prices?.low && card.prices.low > 0) {
+      return { price: card.prices.low, currency: 'USD' };
+    }
+    return null;
+  }
 }

@@ -50,7 +50,7 @@ export class PokemonApiService {
     this.apiKey = process.env.RAPIDAPI_KEY || '';
     if (!this.apiKey) {
       this.logger.warn(
-        'RAPIDAPI_KEY not set — Pokemon-API.com graded pricing will be unavailable',
+        'RAPIDAPI_KEY not set - Pokemon-API.com graded pricing will be unavailable',
       );
     }
   }

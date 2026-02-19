@@ -116,7 +116,7 @@ function parseSlab(metadata: Record<string, unknown>, name?: string, description
     const parts = fingerprint.split('|').map((s: string) => s.trim());
 
     if (parts.length >= 3) {
-      // Part 1: "PSA 80543183" — grader + cert
+      // Part 1: "PSA 80543183" - grader + cert
       const graderCert = parts[1];
       const gcMatch = graderCert.match(/(PSA|BGS|CGC)\s+(\d+)/i);
       if (gcMatch) {
@@ -124,7 +124,7 @@ function parseSlab(metadata: Record<string, unknown>, name?: string, description
         certNumber = certNumber || gcMatch[2];
       }
 
-      // Part 2: "2023 Pokemon 151 #173 Pikachu" — year, set, card number, card name
+      // Part 2: "2023 Pokemon 151 #173 Pikachu" - year, set, card number, card name
       const cardInfo = parts[2];
       const cardMatch = cardInfo.match(/^(\d{4})\s+(.+?)(?:\s+#(\d+)\s+(.+)|$)/);
       if (cardMatch) {
@@ -133,7 +133,7 @@ function parseSlab(metadata: Record<string, unknown>, name?: string, description
         cardName = cardName || cardMatch[4]?.trim() || null;
       }
 
-      // Part 3: "10 GEM MINT" — grade
+      // Part 3: "10 GEM MINT" - grade
       if (parts.length >= 4) {
         const gradeMatch = parts[3].match(/^(\d+(?:\.\d+)?)/);
         grade = grade || gradeMatch?.[1] || null;
@@ -192,9 +192,13 @@ function parseSlab(metadata: Record<string, unknown>, name?: string, description
   return { certNumber, grader, grade, setName, cardName, cardNumber, variant, imageUrl, parseStatus, fingerprint, language, year };
 }
 
+// Cooldown for repeated indexing attempts on the same address (prevents Alchemy abuse)
+const INDEX_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
 @Injectable()
 export class IndexingService {
   private readonly logger = new Logger(IndexingService.name);
+  private readonly recentAttempts = new Map<string, number>();
 
   constructor(private prisma: PrismaService) {}
 
@@ -214,21 +218,30 @@ export class IndexingService {
   async indexAddress(ownerAddress: string): Promise<{ indexed: number; skipped: boolean }> {
     const normalizedOwner = ownerAddress.toLowerCase();
 
-    // Check if we have recent data
+    // In-memory cooldown: prevent repeated Alchemy calls for the same address
+    const lastAttempt = this.recentAttempts.get(normalizedOwner);
+    if (lastAttempt && Date.now() - lastAttempt < INDEX_COOLDOWN_MS) {
+      return { indexed: 0, skipped: true };
+    }
+
+    // Check if we have recent data in DB
     const latestAsset = await this.prisma.assetRaw.findFirst({
       where: { ownerAddress: normalizedOwner, contractAddress: this.courtyardContract },
       orderBy: { lastIndexedAt: 'desc' },
     });
 
     if (latestAsset && Date.now() - latestAsset.lastIndexedAt.getTime() < STALE_THRESHOLD_MS) {
-      this.logger.log(`Skipping index for ${normalizedOwner} — data is fresh`);
+      this.logger.log(`Skipping index for ${normalizedOwner} - data is fresh`);
       return { indexed: 0, skipped: true };
     }
 
     if (!this.alchemyKey) {
-      this.logger.warn('ALCHEMY_API_KEY not set — cannot index');
+      this.logger.warn('ALCHEMY_API_KEY not set - cannot index');
       return { indexed: 0, skipped: true };
     }
+
+    // Record this attempt so we don't re-call Alchemy within the cooldown
+    this.recentAttempts.set(normalizedOwner, Date.now());
 
     // Fetch all NFTs from Alchemy
     const nfts = await this.fetchNftsFromAlchemy(normalizedOwner);
@@ -315,9 +328,9 @@ export class IndexingService {
         parsed.setName = normalizeSetName(parsed.setName);
       }
 
-      // Skip creating slab if we got nothing useful — no card name and no cert
+      // Skip creating slab if we got nothing useful - no card name and no cert
       if (!parsed.cardName && !parsed.certNumber) {
-        this.logger.warn(`Skipping slab tokenId=${tokenId} — no cardName or certNumber`);
+        this.logger.warn(`Skipping slab tokenId=${tokenId} - no cardName or certNumber`);
         continue;
       }
 

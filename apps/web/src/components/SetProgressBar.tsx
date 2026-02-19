@@ -7,23 +7,23 @@ interface SetProgressBarProps {
 
 export default function SetProgressBar({ setName, ownedCount, totalCards, completionPct }: SetProgressBarProps) {
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-gray-600 transition-colors">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="font-semibold text-sm truncate">{setName}</h3>
-        <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
+    <div className="glass-card p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-bold text-sm truncate" style={{ color: 'rgba(255,255,255,0.85)' }}>{setName}</h3>
+        <span className="ml-2 whitespace-nowrap tabular-nums" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>
           {ownedCount}/{totalCards}
         </span>
       </div>
-      <div className="w-full bg-gray-700 rounded-full h-2">
+      <div className="w-full rounded-full h-1.5" style={{ background: 'rgba(255,255,255,0.06)' }}>
         <div
-          className="h-2 rounded-full transition-all duration-500"
+          className="h-1.5 rounded-full transition-all duration-500"
           style={{
             width: `${Math.min(completionPct, 100)}%`,
-            backgroundColor: completionPct === 100 ? '#22c55e' : completionPct > 50 ? '#facc15' : '#3b82f6',
+            backgroundColor: completionPct === 100 ? '#22c55e' : completionPct > 50 ? '#facc15' : '#F5B94B',
           }}
         />
       </div>
-      <p className="text-xs text-gray-500 mt-1">{completionPct}% complete</p>
+      <p className="mt-2" style={{ fontSize: '12px', color: 'rgba(255,255,255,0.30)' }}>{completionPct}% complete</p>
     </div>
   );
 }

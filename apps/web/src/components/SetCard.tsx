@@ -6,71 +6,127 @@ interface SetCardProps {
   address: string;
 }
 
+function getProgressColor(pct: number): string {
+  if (pct === 100) return '#22c55e';
+  if (pct > 75) return '#facc15';
+  if (pct > 50) return '#f59e0b';
+  return '#F5B94B';
+}
+
+function getBadgeTier(pct: number): { label: string; className: string } | null {
+  if (pct === 100) return { label: 'COMPLETE', className: 'badge-gold' };
+  if (pct >= 75) return { label: `${Math.round(pct)}%`, className: 'badge-silver' };
+  if (pct >= 50) return { label: `${Math.round(pct)}%`, className: 'badge-bronze' };
+  return null;
+}
+
 export default function SetCard({ set, address }: SetCardProps) {
-  const isComplete = set.completionPct === 100;
-  const remaining = set.totalCards > 0 ? set.totalCards - set.ownedCount : 0;
+  const knownTotal = set.totalCards > 0;
+  const pct = Math.min(set.completionPct, 100);
+  const progressColor = getProgressColor(pct);
+  const badge = knownTotal ? getBadgeTier(pct) : null;
+
+  const radius = 22;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = circumference - (pct / 100) * circumference;
 
   return (
     <Link
       href={`/address/${address}/sets/${encodeURIComponent(set.setName)}`}
-      className={`bg-gray-800 border rounded-lg overflow-hidden hover:border-gray-500 transition-colors block ${
-        isComplete ? 'border-green-600/50' : 'border-gray-700'
-      }`}
+      className="glass-card-interactive group block"
     >
-      <div className="aspect-[16/9] bg-gray-900 relative flex items-center justify-center overflow-hidden">
+      {/* Image Area */}
+      <div
+        className="aspect-[4/3] relative flex items-center justify-center overflow-hidden"
+        style={{ borderRadius: '20px 20px 0 0', background: 'rgba(0,0,0,0.3)' }}
+      >
+        {/* Ambient glow */}
+        {(set.logoUrl || set.previewImageUrl) && (
+          <div
+            className="ambient-glow group-hover:opacity-25"
+            style={{ backgroundColor: progressColor }}
+          />
+        )}
+
+        {/* Set Image */}
         {set.logoUrl ? (
           <img
             src={set.logoUrl}
             alt={set.setName}
-            className="max-w-full max-h-full object-contain p-4"
+            className="relative z-10 max-w-[80%] max-h-[70%] object-contain drop-shadow-lg transition-transform duration-300 group-hover:scale-105"
             loading="lazy"
           />
         ) : set.previewImageUrl ? (
           <img
             src={set.previewImageUrl}
             alt={set.setName}
-            className="h-full object-contain"
+            className="relative z-10 h-full object-contain drop-shadow-lg transition-transform duration-300 group-hover:scale-105"
             loading="lazy"
           />
         ) : set.symbolUrl ? (
           <img
             src={set.symbolUrl}
             alt={set.setName}
-            className="w-10 h-10 object-contain opacity-40"
+            className="relative z-10 w-12 h-12 object-contain opacity-30"
             loading="lazy"
           />
         ) : (
-          <div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center">
-            <span className="text-gray-500 text-lg font-bold">{set.setName.charAt(0)}</span>
+          <div
+            className="relative z-10 w-14 h-14 rounded-full flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)' }}
+          >
+            <span style={{ color: 'rgba(255,255,255,0.30)', fontSize: '20px', fontWeight: 800 }}>
+              {set.setName.charAt(0).toUpperCase()}
+            </span>
           </div>
         )}
-        {isComplete && (
-          <div className="absolute top-2 right-2 bg-green-600 text-white text-xs font-bold px-2 py-0.5 rounded">
-            Complete
+
+        {/* Progress Ring */}
+        {knownTotal && (
+          <div className="absolute bottom-2 right-2 z-20">
+            <svg width="52" height="52" viewBox="0 0 52 52">
+              <circle className="progress-ring-track" cx="26" cy="26" r={radius} />
+              <circle
+                className="progress-ring-fill"
+                cx="26" cy="26" r={radius}
+                stroke={progressColor}
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+              />
+              <text
+                x="26" y="26"
+                textAnchor="middle"
+                dominantBaseline="central"
+                style={{ fill: 'rgba(255,255,255,0.92)', fontSize: '10px', fontWeight: 700 }}
+              >
+                {Math.round(pct)}%
+              </text>
+            </svg>
+          </div>
+        )}
+
+        {/* Badge */}
+        {badge && (
+          <div className={`absolute top-2.5 right-2.5 z-20 text-[10px] px-2.5 py-1 rounded-full ${badge.className}`}>
+            {badge.label}
           </div>
         )}
       </div>
 
-      <div className="p-3">
-        <h3 className="font-semibold text-sm truncate">{set.setName}</h3>
-        <div className="flex items-center justify-between mt-1">
-          <span className="text-xs text-gray-400">
-            {set.ownedCount}/{set.totalCards}
+      {/* Footer */}
+      <div className="p-3.5">
+        <h3 className="font-bold text-sm truncate transition-colors" style={{ color: 'rgba(255,255,255,0.85)' }}>
+          {set.setName}
+        </h3>
+        <div className="flex items-center justify-between mt-1.5">
+          <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '12px' }}>
+            {knownTotal ? `${set.ownedCount} / ${set.totalCards}` : `${set.ownedCount} cards`}
           </span>
-          <span className={`text-xs font-medium ${
-            isComplete ? 'text-green-400' : 'text-gray-500'
-          }`}>
-            {isComplete ? 'Complete!' : `${remaining} left`}
-          </span>
-        </div>
-        <div className="w-full bg-gray-700 rounded-full h-1.5 mt-2">
-          <div
-            className="h-1.5 rounded-full transition-all duration-500"
-            style={{
-              width: `${Math.min(set.completionPct, 100)}%`,
-              backgroundColor: isComplete ? '#22c55e' : set.completionPct > 50 ? '#facc15' : '#3b82f6',
-            }}
-          />
+          {set.releaseYear && (
+            <span className="tabular-nums" style={{ color: 'rgba(255,255,255,0.20)', fontSize: '11px' }}>
+              {set.releaseYear}
+            </span>
+          )}
         </div>
       </div>
     </Link>

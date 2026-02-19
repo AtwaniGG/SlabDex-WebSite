@@ -40,6 +40,89 @@ export const JP_SETS: JpSetData[] = [
 ];
 
 /**
+ * Total card counts for JP/specialty sets not covered by TCGdex EN catalog.
+ * Sourced from TCGdex JP API (/v2/ja/sets) and Bulbapedia.
+ * Key = set name (lowercase) as it appears in our DB.
+ * Includes secret rares (total, not just official).
+ */
+export const SET_TOTAL_CARDS: Record<string, number> = {
+  // --- Scarlet & Violet era (from TCGdex JP) ---
+  'terastal fest ex': 237,
+  'stellar miracle': 135,
+  'paradise dragona': 94,
+  'paradise dragona - sv7a': 94,
+  'transformation mask': 101,
+  'wild force': 71,
+  'future flash': 95,
+  'crimson haze': 96,
+  'clay burst': 99,
+  'scarlet ex': 108,
+  'shiny treasure ex': 360,
+  'ruler of the black flame': 141,
+  'black star promos - scarlet & violet svpen': 50,
+  'svp black star promos': 50,
+  'scarlet & violet black star promos': 50,
+
+  // --- Sword & Shield era ---
+  'shiny star v': 190,
+  'eevee heroes': 69,
+  'amazing volt tackle': 100,
+  'dark phantasma': 71,
+  'vstar universe': 254,
+  '25th anniversary collection': 28,
+  'shiny collection': 20,
+
+  // --- Sun & Moon era ---
+  'tag bolt': 95,
+  'sky-splitting charisma': 96,
+  'all stars collection': 173,
+
+  // --- Classic / Neo era ---
+  'base expansion pack': 102,
+  'rocket gang': 65,
+  'gym': 96,
+  "gym booster 1: leaders' stadium": 96,
+  'gym 2: challenge from the darkness': 98,
+  'vs': 143,
+  'neo': 96,
+  'gold, silver, to a new world': 96,
+  'neo 3': 57,
+  'awakening legends': 57,
+  'neo 4': 113,
+  'darkness, and to light': 113,
+  'golden sky, silvery ocean': 106,
+  'rulers of the heavens': 54,
+  'offense & defense of the furthest ends': 68,
+  'wind from the sea': 90,
+  'the town on no map': 92,
+
+  // --- XY / BW / DP / HGSS era ---
+  'soulsilver collection': 70,
+
+  // --- Special products / decks ---
+  'trading card game classic - clf, cll, clk': 101,
+  'trading card game classic - clv, clc, clb': 101,
+  'trading card game classic charizard & ho-oh ex deck': 60,
+  'battle academy': 66,
+  'venusaur & charizard & blastoise special deck set ex': 12,
+  'venusaur & lugia ex deck': 12,
+  'promo card pack 25th anniversary edition': 25,
+  'p promo': 47,
+  'vending series 3 (pokeball symbol. glossy)': 118,
+
+  // --- Obscure / specialty products ---
+  'neo premium file': 9,
+  'neo premium file 2': 9,
+  'neo premium file 3': 9,
+  'neo 3 promo': 4,
+  'advanced generation (pink border)': 55,
+  'red/green gift set': 60,
+  'old maid': 54,
+  'base set (2004)(non bold romanji back)': 102,
+  'base set (2005)(bold romanji back)': 102,
+};
+
+/**
  * Pokellector logo URLs for JP/specialty sets not in TCGdex EN.
  * Sourced from jp.pokellector.com/sets.
  * Key = set name (lowercase) as it appears in our DB.
@@ -97,6 +180,18 @@ export const POKELLECTOR_LOGOS: Record<string, string> = {
   'vs': 'https://den-media.pokellector.com/logos/Pokemon-VS.logo.276.png',
   'base expansion pack': 'https://den-media.pokellector.com/logos/Expansion-Pack.logo.311.png',
   'vending series 3 (pokeball symbol. glossy)': 'https://den-media.pokellector.com/logos/Vending-Series-3-Green.logo.397.png',
+
+  // --- Classic / Neo / ADV / PCG era (EN equivalent logos) ---
+  'wind from the sea': 'https://den-media.pokellector.com/logos/Aquapolis.logo.110.png',
+  'rulers of the heavens': 'https://den-media.pokellector.com/logos/EX-Dragon.logo.54.png',
+  'golden sky, silvery ocean': 'https://den-media.pokellector.com/logos/EX-Unseen-Forces.logo.61.png',
+  'offense & defense of the furthest ends': 'https://den-media.pokellector.com/logos/EX-Dragon-Frontiers.logo.66.png',
+  'neo premium file': 'https://den-media.pokellector.com/logos/Neo.logo.323.png',
+  'neo premium file 2': 'https://den-media.pokellector.com/logos/Neo.logo.323.png',
+  'neo premium file 3': 'https://den-media.pokellector.com/logos/Neo.logo.323.png',
+  'neo 3 promo': 'https://den-media.pokellector.com/logos/Awakening-Legends.logo.332.png',
+  'promo': 'https://den-media.pokellector.com/logos/Scarlet-Violet-Promos.logo.364.png',
+  'advanced generation (pink border)': 'https://den-media.pokellector.com/logos/Ruby-Sapphire.logo.49.png',
 
   // --- EN sub-sets / special sets (use parent logo) ---
   'hidden fates shiny vault': 'https://den-media.pokellector.com/logos/Hidden-Fates.logo.279.png',

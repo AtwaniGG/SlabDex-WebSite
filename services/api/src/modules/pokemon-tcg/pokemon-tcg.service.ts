@@ -75,7 +75,7 @@ interface TcgdexSetDetail {
   cards?: { id: string; localId: string; name: string; image?: string }[];
 }
 
-/** Full card detail from TCGdex (EN or JP) — used for sort metadata. */
+/** Full card detail from TCGdex (EN or JP) - used for sort metadata. */
 export interface TcgdexCardDetail {
   id: string;
   localId: string;
@@ -190,31 +190,62 @@ export class PokemonTcgService {
 
   /**
    * Extract the best USD market price from TCGdex pricing data.
-   * Tries variants in order: normal > holofoil > reverseHolofoil > 1stEdition variants.
-   * Falls back to Cardmarket EUR avg if no TCGPlayer data.
+   * When preferredVariant is provided, tries that variant first before falling
+   * back to the default order (normal > holofoil > reverseHolofoil > 1stEdition).
    */
-  extractMarketPrice(pricing: TcgdexPricing | null): { price: number; currency: string; variant: string } | null {
+  extractMarketPrice(
+    pricing: TcgdexPricing | null,
+    preferredVariant?: string | null,
+  ): { price: number; currency: string; variant: string } | null {
     if (!pricing) return null;
 
-    // Try TCGPlayer USD first
-    if (pricing.tcgplayer) {
-      const variants: [string, TcgdexVariantPrices | undefined][] = [
-        ['normal', pricing.tcgplayer.normal],
-        ['holofoil', pricing.tcgplayer.holofoil],
-        ['reverseHolofoil', pricing.tcgplayer.reverseHolofoil],
-        ['1stEditionHolofoil', pricing.tcgplayer['1stEditionHolofoil']],
-        ['1stEditionNormal', pricing.tcgplayer['1stEditionNormal']],
-      ];
+    // Map slab variant strings to TCGdex pricing keys
+    const VARIANT_MAP: Record<string, string> = {
+      'holo': 'holofoil',
+      'holofoil': 'holofoil',
+      'reverse holo': 'reverseHolofoil',
+      'reverse holofoil': 'reverseHolofoil',
+      '1st edition holo': '1stEditionHolofoil',
+      '1st edition holofoil': '1stEditionHolofoil',
+      '1st edition': '1stEditionNormal',
+      'normal': 'normal',
+    };
 
-      for (const [variant, data] of variants) {
-        if (data?.marketPrice && data.marketPrice > 0) {
+    if (pricing.tcgplayer) {
+      // Collect all variant entries dynamically (keys vary: "holofoil", "unlimited-holofoil", "1st-edition-holofoil", etc.)
+      const skipKeys = new Set(['updated', 'unit']);
+      const allVariants: [string, TcgdexVariantPrices][] = [];
+      for (const [key, val] of Object.entries(pricing.tcgplayer)) {
+        if (skipKeys.has(key) || !val || typeof val !== 'object') continue;
+        allVariants.push([key, val as TcgdexVariantPrices]);
+      }
+
+      // Try preferred variant first (fuzzy match against all keys)
+      if (preferredVariant) {
+        const mapped = VARIANT_MAP[preferredVariant.toLowerCase()] ?? preferredVariant.toLowerCase();
+        // Match by exact key or substring (e.g. "holofoil" matches "unlimited-holofoil")
+        const preferred = allVariants.find(([k]) => k === mapped || k.includes(mapped) || mapped.includes(k));
+        if (preferred) {
+          const [vKey, data] = preferred;
+          if (data.marketPrice && data.marketPrice > 0) {
+            return { price: Math.round(data.marketPrice * 100) / 100, currency: 'USD', variant: vKey };
+          }
+          if (data.midPrice && data.midPrice > 0) {
+            return { price: Math.round(data.midPrice * 100) / 100, currency: 'USD', variant: vKey };
+          }
+        }
+      }
+
+      // Fallback: best marketPrice across all variants
+      for (const [variant, data] of allVariants) {
+        if (data.marketPrice && data.marketPrice > 0) {
           return { price: Math.round(data.marketPrice * 100) / 100, currency: 'USD', variant };
         }
       }
 
-      // Fallback to midPrice if no marketPrice
-      for (const [variant, data] of variants) {
-        if (data?.midPrice && data.midPrice > 0) {
+      // Fallback: best midPrice across all variants
+      for (const [variant, data] of allVariants) {
+        if (data.midPrice && data.midPrice > 0) {
           return { price: Math.round(data.midPrice * 100) / 100, currency: 'USD', variant };
         }
       }
@@ -252,7 +283,7 @@ export class PokemonTcgService {
     }));
   }
 
-  // ── TCGdex JP methods (for sort metadata) ──
+  // -- TCGdex JP methods (for sort metadata) --
 
   /** List all JP sets from TCGdex. */
   async getJpSets(): Promise<TcgdexSetListItem[]> {

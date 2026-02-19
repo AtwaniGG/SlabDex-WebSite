@@ -11,19 +11,23 @@ export default async function AddressDashboard({ params }: Props) {
   let slabsResult;
 
   try {
-    // Summary must complete first — it triggers indexing for new addresses
     summary = await api.getAddressSummary(params.address);
     slabsResult = await api.getAddressSlabs(params.address);
   } catch {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="text-center py-12">
-          <h2 className="text-xl font-semibold text-gray-300">Unable to load data</h2>
-          <p className="text-gray-500 mt-2">
+      <div className="max-w-6xl mx-auto px-5 py-16 text-center">
+        <div className="glass-card inline-block px-10 py-8">
+          <h2 className="text-xl font-bold" style={{ color: 'rgba(255,255,255,0.85)' }}>Unable to load data</h2>
+          <p style={{ color: 'rgba(255,255,255,0.40)', marginTop: '8px', fontSize: '14px' }}>
             Make sure the API server is running and the address is valid.
           </p>
-          <Link href="/" className="inline-block mt-4 text-pokeblue hover:underline">
-            Go back
+          <Link href="/" className="explore-btn mt-6 text-sm">
+            <span>Go back</span>
+            <span className="arrow-circle">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </span>
           </Link>
         </div>
       </div>
@@ -33,49 +37,71 @@ export default async function AddressDashboard({ params }: Props) {
   const completedSets = summary.sets.filter((s) => s.completionPct === 100).length;
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      {/* Address header */}
-      <div className="mb-8">
-        <Link href="/" className="text-sm text-gray-500 hover:text-gray-300 mb-2 inline-block">
-          &larr; Back
-        </Link>
-        <h1 className="text-xl font-bold truncate">{params.address}</h1>
+    <div className="max-w-6xl mx-auto px-5 sm:px-8 py-10">
+      {/* Back link */}
+      <Link
+        href="/"
+        className="inline-flex items-center gap-1.5 mb-8 transition-all"
+        style={{ color: 'rgba(255,255,255,0.35)', fontSize: '13px' }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Back
+      </Link>
+
+      {/* Page title */}
+      <div className="mb-10">
+        <h1
+          className="text-4xl sm:text-5xl font-black"
+          style={{ letterSpacing: '-0.03em', color: 'rgba(255,255,255,0.95)' }}
+        >
+          Dashboard
+        </h1>
+        <p
+          className="mt-2 font-mono truncate"
+          style={{ color: 'rgba(255,255,255,0.25)', fontSize: '13px' }}
+        >
+          {params.address}
+        </p>
       </div>
 
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-400">Total Slabs</p>
-          <p className="text-2xl font-bold">{summary.totalSlabs}</p>
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-10">
+        <div className="stat-card">
+          <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Total Slabs</p>
+          <p className="text-3xl font-black mt-1 tabular-nums" style={{ color: 'rgba(255,255,255,0.92)' }}>{summary.totalSlabs}</p>
         </div>
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-400">Sets</p>
-          <p className="text-2xl font-bold">
-            {completedSets}/{summary.totalSets}
-            <span className="text-sm font-normal text-gray-400 ml-1">complete</span>
+        <div className="stat-card">
+          <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Sets</p>
+          <p className="text-3xl font-black mt-1 tabular-nums">
+            <span style={{ color: '#22c55e' }}>{completedSets}</span>
+            <span style={{ color: 'rgba(255,255,255,0.25)', fontSize: '20px' }}>/{summary.totalSets}</span>
           </p>
         </div>
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-400">Est. Value</p>
-          <p className="text-2xl font-bold text-green-400">
+        <div className="stat-card">
+          <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Est. Value</p>
+          <p className="text-3xl font-black mt-1 tabular-nums" style={{ color: '#22c55e' }}>
             ${summary.estimatedValueUsd.toLocaleString()}
           </p>
         </div>
-        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-          <p className="text-sm text-gray-400">Platform</p>
-          <p className="text-2xl font-bold">Courtyard</p>
+        <div className="stat-card">
+          <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Platform</p>
+          <p className="text-3xl font-black mt-1" style={{ color: 'rgba(255,255,255,0.92)' }}>Courtyard</p>
         </div>
       </div>
 
-      {/* Slabs */}
+      {/* Slabs section */}
       <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Your Slabs</h2>
-          <Link
-            href={`/address/${params.address}/sets`}
-            className="px-4 py-2 bg-pokeblue hover:bg-pokeblue/80 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            Sets
+        <div className="flex items-center justify-between mb-8">
+          <h2 className="section-header">Your Slabs</h2>
+          <Link href={`/address/${params.address}/sets`} className="explore-btn text-sm">
+            <span>View Sets</span>
+            <span className="arrow-circle">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </span>
           </Link>
         </div>
         <SlabListPaginated address={params.address} initialData={slabsResult} />

@@ -51,20 +51,22 @@ export default function SlabListPaginated({ address, initialData }: SlabListPagi
 
   if (slabs.length === 0 && !loading) {
     return (
-      <div className="text-center py-12 text-gray-500">
-        <p className="text-lg">No slabs found</p>
-        <p className="text-sm mt-1">This address may not own any Courtyard slabs, or indexing is still in progress.</p>
+      <div className="glass-card text-center py-16 px-8">
+        <p style={{ color: 'rgba(255,255,255,0.50)', fontSize: '16px' }}>No slabs found</p>
+        <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '13px', marginTop: '8px' }}>
+          This address may not own any Courtyard slabs, or indexing is still in progress.
+        </p>
       </div>
     );
   }
 
   return (
     <div>
-      <div className="flex justify-end mb-4">
+      <div className="flex justify-end mb-5">
         <select
           value={sort}
           onChange={(e) => handleSortChange(e.target.value as SortOption)}
-          className="bg-gray-800 border border-gray-700 text-sm text-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-pokeblue"
+          className="glass-select"
         >
           <option value="">Newest First</option>
           <option value="price_desc">Price: High to Low</option>
@@ -82,17 +84,25 @@ export default function SlabListPaginated({ address, initialData }: SlabListPagi
           <SlabCard key={slab.id} slab={slab} />
         ))}
       </div>
-      <div className="text-center mt-6">
-        <p className="text-sm text-gray-500 mb-3">
+
+      <div className="text-center mt-10">
+        <p className="mb-4 tabular-nums" style={{ color: 'rgba(255,255,255,0.30)', fontSize: '13px' }}>
           Showing {slabs.length} of {total} slabs
         </p>
         {hasMore && (
           <button
             onClick={loadMore}
             disabled={loading}
-            className="px-6 py-2 bg-pokeblue hover:bg-pokeblue/80 disabled:opacity-50 text-white rounded-lg transition-colors"
+            className="explore-btn disabled:opacity-40"
           >
-            {loading ? 'Loading...' : 'Load More'}
+            <span>{loading ? 'Loading...' : 'Load More'}</span>
+            {!loading && (
+              <span className="arrow-circle">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 5v14M5 12l7 7 7-7" />
+                </svg>
+              </span>
+            )}
           </button>
         )}
       </div>

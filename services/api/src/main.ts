@@ -7,6 +7,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module';
+import { RateLimitGuard } from './common/guards/rate-limit.guard';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -15,6 +16,7 @@ async function bootstrap() {
   );
 
   app.setGlobalPrefix('api');
+  app.useGlobalGuards(new RateLimitGuard());
   app.enableCors({
     origin: process.env.API_CORS_ORIGIN || 'http://localhost:3000',
   });

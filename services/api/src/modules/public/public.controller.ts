@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { PublicService } from './public.service';
+import { EthAddressPipe } from '../../common/pipes/eth-address.pipe';
 import type { SortOption } from '../slabs/slabs.service';
 
 @Controller('public')
@@ -7,13 +8,13 @@ export class PublicController {
   constructor(private publicService: PublicService) {}
 
   @Get('address/:address/summary')
-  async getAddressSummary(@Param('address') address: string) {
+  async getAddressSummary(@Param('address', EthAddressPipe) address: string) {
     return this.publicService.getAddressSummary(address);
   }
 
   @Get('address/:address/slabs')
   async getAddressSlabs(
-    @Param('address') address: string,
+    @Param('address', EthAddressPipe) address: string,
     @Query('set') set?: string,
     @Query('q') q?: string,
     @Query('grade') grade?: string,
@@ -30,13 +31,13 @@ export class PublicController {
   }
 
   @Get('address/:address/slabs-by-set')
-  async getAddressSlabsBySet(@Param('address') address: string) {
+  async getAddressSlabsBySet(@Param('address', EthAddressPipe) address: string) {
     return this.publicService.getAddressSlabsBySet(address);
   }
 
   @Get('address/:address/sets/:setName')
   async getAddressSetDetail(
-    @Param('address') address: string,
+    @Param('address', EthAddressPipe) address: string,
     @Param('setName') setName: string,
   ) {
     const decoded = decodeURIComponent(setName);
@@ -44,7 +45,7 @@ export class PublicController {
   }
 
   @Get('address/:address/sets')
-  async getAddressSets(@Param('address') address: string) {
+  async getAddressSets(@Param('address', EthAddressPipe) address: string) {
     return this.publicService.getAddressSets(address);
   }
 }

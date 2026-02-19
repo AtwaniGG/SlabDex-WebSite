@@ -5,22 +5,25 @@ interface Props {
 }
 
 export default async function SlabDetailPage({ params }: Props) {
-  // TODO: Wire to API when slab detail endpoint is implemented
-  // const slab = await api.getSlabById(params.slabId);
-
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto px-5 sm:px-8 py-10">
       <Link
         href={`/address/${params.address}`}
-        className="text-sm text-gray-500 hover:text-gray-300 mb-4 inline-block"
+        className="inline-flex items-center gap-1.5 mb-8 transition-all"
+        style={{ color: 'rgba(255,255,255,0.35)', fontSize: '13px' }}
       >
-        &larr; Back to dashboard
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Back to dashboard
       </Link>
 
-      <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
-        <h1 className="text-xl font-bold mb-4">Slab Detail</h1>
-        <p className="text-gray-400">Slab ID: {params.slabId}</p>
-        <p className="text-gray-500 text-sm mt-4">
+      <div className="glass-card p-6 sm:p-8">
+        <h1 className="text-xl font-black mb-4" style={{ color: 'rgba(255,255,255,0.92)' }}>Slab Detail</h1>
+        <p style={{ color: 'rgba(255,255,255,0.45)' }}>
+          Slab ID: <span className="font-mono text-sm">{params.slabId}</span>
+        </p>
+        <p className="mt-4" style={{ color: 'rgba(255,255,255,0.30)', fontSize: '14px' }}>
           Detailed slab view will show cert number, grade, set info, price snapshot, and price history (premium).
         </p>
       </div>
