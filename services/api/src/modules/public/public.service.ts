@@ -23,29 +23,28 @@ export class PublicService {
     // Trigger indexing if data is stale or missing
     await this.indexingService.indexAddress(normalizedAddress);
 
-    // Fire-and-forget: fetch prices in the background
-    this.pricingService.fetchPricesForOwner(normalizedAddress).catch((e) =>
-      this.logger.error(`Background price fetch failed: ${e}`),
-    );
+    // Check if any prices already exist in slab_prices for this address
+    const existingPriceCount = await this.prisma.slabPrice.count({
+      where: { slab: { assetRaw: { ownerAddress: normalizedAddress } } },
+    });
 
-    const [totalSlabs, sets, totalValue] = await Promise.all([
+    if (existingPriceCount === 0) {
+      // First load — await pricing so we return real values
+      await this.pricingService.priceSlabsForOwner(normalizedAddress);
+    } else {
+      // Prices cached — refresh in background
+      this.pricingService.priceSlabsForOwner(normalizedAddress).catch((e) =>
+        this.logger.error(`Background price fetch failed: ${e}`),
+      );
+    }
+
+    const [totalSlabs, sets, estimatedValue] = await Promise.all([
       this.prisma.slab.count({
         where: { assetRaw: { ownerAddress: normalizedAddress } },
       }),
       this.setsService.getSetProgressByOwner(normalizedAddress),
-      this.prisma.price.findMany({
-        where: {
-          slab: { assetRaw: { ownerAddress: normalizedAddress } },
-        },
-        distinct: ['slabId'],
-        orderBy: { retrievedAt: 'desc' },
-      }),
+      this.pricingService.getEstimatedValue(normalizedAddress),
     ]);
-
-    const estimatedValue = totalValue.reduce(
-      (sum, p) => sum + Number(p.marketPrice),
-      0,
-    );
 
     return {
       address: normalizedAddress,

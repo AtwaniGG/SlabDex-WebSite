@@ -145,6 +145,7 @@ model Slab {
 
   assetRaw            AssetRaw             @relation(fields: [assetRawId], references: [id], onDelete: Cascade)
   prices              Price[]
+  slabPrice           SlabPrice?
   priceSnapshotsDaily PriceSnapshotDaily[]
 
   @@index([certNumber])
@@ -169,6 +170,16 @@ model Price {
 
   @@index([slabId, retrievedAt])
   @@map("prices")
+}
+
+model SlabPrice {
+  slabId    String   @id @map("slab_id")
+  priceUsd  Decimal? @map("price_usd") @db.Decimal(12, 2)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  slab Slab @relation(fields: [slabId], references: [id], onDelete: Cascade)
+
+  @@map("slab_prices")
 }
 
 model PriceSnapshotDaily {

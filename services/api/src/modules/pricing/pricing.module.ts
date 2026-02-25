@@ -1,13 +1,15 @@
 import { Module } from '@nestjs/common';
 import { PricingService } from './pricing.service';
-import { PokemonTcgModule } from '../pokemon-tcg/pokemon-tcg.module';
-import { JustTcgService } from './justtcg.service';
-import { PriceTrackerService } from './price-tracker.service';
+import { PricingController } from './pricing.controller';
+import { TcgdexAdapter } from './tcgdex.adapter';
 import { EbayService } from './ebay.service';
+import { RedisProvider } from './redis.provider';
+import { PokemonTcgModule } from '../pokemon-tcg/pokemon-tcg.module';
 
 @Module({
   imports: [PokemonTcgModule],
-  providers: [PricingService, JustTcgService, PriceTrackerService, EbayService],
+  controllers: [PricingController],
+  providers: [PricingService, TcgdexAdapter, EbayService, RedisProvider],
   exports: [PricingService],
 })
 export class PricingModule {}

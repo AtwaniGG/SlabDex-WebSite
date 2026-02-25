@@ -90,16 +90,25 @@ export class EbayService {
     const token = await this.getAccessToken();
     if (!token) return null;
 
+    // Truncate long set names to first 4 words to avoid overly specific queries
+    let shortSet = setName;
+    if (setName && setName.split(/\s+/).length > 4) {
+      shortSet = setName.split(/\s+/).slice(0, 4).join(' ');
+    }
+
     const queryParts = [grader.toUpperCase(), grade, cardName];
-    if (setName) queryParts.push(setName);
+    if (shortSet) queryParts.push(shortSet);
     const q = queryParts.join(' ');
 
     const url = new URL(EBAY_BROWSE_URL);
     url.searchParams.set('q', q);
     url.searchParams.set('category_ids', POKEMON_TCG_CATEGORY);
-    url.searchParams.set('filter', 'buyingOptions:{FIXED_PRICE}');
+    url.searchParams.set(
+      'filter',
+      'buyingOptions:{FIXED_PRICE},deliveryCountry:US',
+    );
     url.searchParams.set('sort', 'price');
-    url.searchParams.set('limit', '15');
+    url.searchParams.set('limit', '25');
 
     try {
       this.logger.debug(`eBay search: "${q}"`);
@@ -158,37 +167,37 @@ export class EbayService {
       return hasName && hasGrader && hasGrade;
     });
 
-    if (relevant.length < 2) return null;
+    if (relevant.length < 1) return null;
 
     const prices = relevant
       .map((item) => parseFloat(item.price.value))
       .filter((p) => !isNaN(p) && p > 0)
       .sort((a, b) => a - b);
 
-    if (prices.length < 2) return null;
+    if (prices.length < 1) return null;
 
     // Remove outliers: drop below 10% or above 500% of rough median
     const roughMedian = prices[Math.floor(prices.length / 2)];
-    const filtered = prices.filter(
-      (p) => p >= roughMedian * 0.1 && p <= roughMedian * 5,
-    );
+    const filtered = prices.length >= 3
+      ? prices.filter((p) => p >= roughMedian * 0.1 && p <= roughMedian * 5)
+      : prices; // Skip outlier filter when few results
 
-    if (filtered.length < 2) return null;
+    if (filtered.length < 1) return null;
 
-    // Median
-    const mid = Math.floor(filtered.length / 2);
-    const median =
-      filtered.length % 2 === 0
-        ? (filtered[mid - 1] + filtered[mid]) / 2
-        : filtered[mid];
+    // Use lowest price — active BIN listings are asking prices (not sold),
+    // so the cheapest listing is closest to actual market value.
+    // Cap at $5000: allows high-value graded cards (vintage holos, BGS 10s).
+    const MAX_EBAY_BIN_PRICE = 5000;
+    const rawPrice = filtered[0];
+    const price = Math.min(rawPrice, MAX_EBAY_BIN_PRICE);
 
     const confidence: 'high' | 'medium' | 'low' =
-      filtered.length >= 5 ? 'high' : filtered.length >= 3 ? 'medium' : 'low';
+      filtered.length >= 5 ? 'high' : filtered.length >= 2 ? 'medium' : 'low';
 
     return {
-      price: Math.round(median * 100) / 100,
+      price: Math.round(price * 100) / 100,
       confidence,
-      source: `ebay:browse:${graderLower}${gradeStr}:median`,
+      source: `ebay:browse:${graderLower}${gradeStr}:min`,
       sampleSize: filtered.length,
       listings: relevant.slice(0, 5).map((item) => ({
         title: item.title,

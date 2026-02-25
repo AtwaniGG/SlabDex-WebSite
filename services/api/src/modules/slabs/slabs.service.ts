@@ -63,10 +63,7 @@ export class SlabsService {
       this.prisma.slab.findMany({
         where,
         include: {
-          prices: {
-            orderBy: { retrievedAt: 'desc' },
-            take: 1,
-          },
+          slabPrice: true,
         },
         orderBy: inMemorySort
           ? undefined
@@ -92,9 +89,9 @@ export class SlabsService {
       dexId: slab.dexId,
       rarity: slab.rarity,
       cardType: slab.cardType,
-      marketPrice: slab.prices[0]?.marketPrice ? Number(slab.prices[0].marketPrice) : null,
-      priceCurrency: slab.prices[0]?.currency ?? null,
-      priceRetrievedAt: slab.prices[0]?.retrievedAt ?? null,
+      marketPrice: slab.slabPrice?.priceUsd ? Number(slab.slabPrice.priceUsd) : null,
+      priceCurrency: slab.slabPrice?.priceUsd ? 'USD' : null,
+      priceRetrievedAt: slab.slabPrice?.updatedAt ?? null,
     }));
 
     if (inMemorySort) {
@@ -137,10 +134,7 @@ export class SlabsService {
     const slabs = await this.prisma.slab.findMany({
       where: { assetRaw: { ownerAddress } },
       include: {
-        prices: {
-          orderBy: { retrievedAt: 'desc' },
-          take: 1,
-        },
+        slabPrice: true,
       },
       orderBy: [{ setName: 'asc' }, { cardNumber: 'asc' }],
     });
@@ -174,9 +168,9 @@ export class SlabsService {
       imageUrl: slab.imageUrl,
       parseStatus: slab.parseStatus,
       platform: slab.platform,
-      marketPrice: slab.prices[0]?.marketPrice ?? null,
-      priceCurrency: slab.prices[0]?.currency ?? null,
-      priceRetrievedAt: slab.prices[0]?.retrievedAt ?? null,
+      marketPrice: slab.slabPrice?.priceUsd ? Number(slab.slabPrice.priceUsd) : null,
+      priceCurrency: slab.slabPrice?.priceUsd ? 'USD' : null,
+      priceRetrievedAt: slab.slabPrice?.updatedAt ?? null,
     });
 
     const groups: {
@@ -233,10 +227,7 @@ export class SlabsService {
       where: { id },
       include: {
         assetRaw: true,
-        prices: {
-          orderBy: { retrievedAt: 'desc' },
-          take: 1,
-        },
+        slabPrice: true,
       },
     });
   }

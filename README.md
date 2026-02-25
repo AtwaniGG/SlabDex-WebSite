@@ -36,7 +36,6 @@ pnpm dev:api      # NestJS API on http://localhost:3001
 pnpm dev:web      # Next.js frontend on http://localhost:3000
 pnpm dev:worker   # BullMQ worker process
 ```
-
 ## Build
 
 ```bash
